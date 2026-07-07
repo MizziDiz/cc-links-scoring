@@ -1,0 +1,6 @@
+requests>=2.31.0
+warcio>=1.7.4
+beautifulsoup4>=4.12.0
+tldextract>=5.1.0
+tqdm>=4.66.0
+duckdb>=1.0.0

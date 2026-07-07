@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+
+# Local run artifacts
+*.db
+*.db-journal
+*.candidates.jsonl
+*.candidates.jsonl.state.json
+
+# Real proxy credentials -- never commit
+proxies.txt

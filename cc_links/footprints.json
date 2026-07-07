@@ -1,0 +1,45 @@
+{
+    "comment": "Heuristic footprints per engine category, used for platform-market scoring (generator meta tag, page text, URL path). Extend freely -- this is not exhaustive.",
+    "engines": [
+        {"category": "Forum", "name": "phpBB", "generator": ["phpbb"], "html_contains": ["powered by phpbb"], "url_path_contains": ["viewtopic.php", "viewforum.php"]},
+        {"category": "Forum", "name": "vBulletin", "generator": ["vbulletin"], "html_contains": ["powered by vbulletin"], "url_path_contains": ["showthread.php", "forumdisplay.php"]},
+        {"category": "Forum", "name": "SMF", "generator": ["simple machines"], "html_contains": ["powered by smf", "simple machines forum"], "url_path_contains": ["index.php?board", "index.php?topic"]},
+        {"category": "Forum", "name": "XenForo", "generator": ["xenforo"], "html_contains": ["powered by xenforo"], "url_path_contains": ["/threads/", "/forums/"]},
+        {"category": "Forum", "name": "MyBB", "generator": ["mybb"], "html_contains": ["powered by mybb"], "url_path_contains": ["showthread.php?tid"]},
+        {"category": "Forum", "name": "Discourse", "generator": ["discourse"], "html_contains": [], "url_path_contains": ["/t/"]},
+        {"category": "Forum", "name": "Invision Community", "generator": ["invision"], "html_contains": ["powered by invision"], "url_path_contains": []},
+
+        {"category": "Blog Comment", "name": "WordPress", "generator": ["wordpress"], "html_contains": ["wp-content", "wp-includes"], "url_path_contains": ["wp-comments-post.php", "/wp-content/"]},
+        {"category": "Blog Comment", "name": "Blogger", "generator": ["blogger"], "html_contains": ["blogspot.com"], "url_path_contains": []},
+        {"category": "Blog Comment", "name": "Movable Type", "generator": ["movable type"], "html_contains": ["powered by movable type"], "url_path_contains": ["mt-comments.cgi"]},
+        {"category": "Blog Comment", "name": "Drupal", "generator": ["drupal"], "html_contains": ["sites/default/files"], "url_path_contains": ["/comment/reply/"]},
+
+        {"category": "Guestbook", "name": "Generic Guestbook", "generator": [], "html_contains": ["sign the guestbook", "view the guestbook", "guestbook entries"], "url_path_contains": ["guestbook.cgi", "gbook.php", "signbook.php"]},
+        {"category": "Guestbook", "name": "Advanced Guestbook", "generator": [], "html_contains": ["advanced guestbook"], "url_path_contains": ["addentry.php"]},
+
+        {"category": "Trackback", "name": "WordPress Trackback", "generator": [], "html_contains": ["trackback ping", "trackback url"], "url_path_contains": ["/trackback/", "wp-trackback.php"]},
+        {"category": "Trackback", "name": "Movable Type Trackback", "generator": [], "html_contains": ["send trackback"], "url_path_contains": ["mt-tb.cgi"]},
+
+        {"category": "Image Comment", "name": "Coppermine", "generator": [], "html_contains": ["coppermine photo gallery"], "url_path_contains": ["displayimage.php"]},
+        {"category": "Image Comment", "name": "Piwigo", "generator": ["piwigo"], "html_contains": ["powered by piwigo"], "url_path_contains": []},
+        {"category": "Image Comment", "name": "Gallery", "generator": ["gallery"], "html_contains": ["powered by gallery"], "url_path_contains": ["/gallery2/", "/main.php?g2_"]},
+        {"category": "Image Comment", "name": "Zenphoto", "generator": ["zenphoto"], "html_contains": ["powered by zenphoto"], "url_path_contains": []},
+
+        {"category": "Directory", "name": "PHP Link Directory", "generator": [], "html_contains": ["powered by php link directory", "phpld"], "url_path_contains": ["/listing/", "add-url.php"]},
+        {"category": "Directory", "name": "Generic Directory", "generator": [], "html_contains": ["submit your link", "link directory", "business directory"], "url_path_contains": ["/directory/", "submit-link"]},
+
+        {"category": "Article", "name": "Article Dashboard", "generator": [], "html_contains": ["powered by article dashboard"], "url_path_contains": []},
+        {"category": "Article", "name": "ArticleFriendly", "generator": [], "html_contains": ["powered by articlefriendly"], "url_path_contains": []},
+        {"category": "Article", "name": "Generic Article Script", "generator": [], "html_contains": ["submit article", "article directory", "author bio"], "url_path_contains": ["/article/", "/articles/"]},
+
+        {"category": "Microblog", "name": "Tumblr", "generator": ["tumblr"], "html_contains": ["tumblr.com"], "url_path_contains": []},
+        {"category": "Microblog", "name": "Mastodon", "generator": ["mastodon"], "html_contains": ["mastodon"], "url_path_contains": ["/api/v1/instance"]},
+        {"category": "Microblog", "name": "GNU Social", "generator": ["statusnet", "gnu social"], "html_contains": ["powered by gnu social"], "url_path_contains": []},
+
+        {"category": "Social Network", "name": "Elgg", "generator": ["elgg"], "html_contains": ["powered by elgg"], "url_path_contains": []},
+        {"category": "Social Network", "name": "BuddyPress", "generator": ["buddypress"], "html_contains": ["buddypress"], "url_path_contains": ["/members/"]},
+        {"category": "Social Network", "name": "PHPFox", "generator": ["phpfox"], "html_contains": ["powered by phpfox"], "url_path_contains": []},
+        {"category": "Social Network", "name": "Dolphin", "generator": ["dolphin"], "html_contains": ["powered by dolphin"], "url_path_contains": []},
+        {"category": "Social Network", "name": "Oxwall", "generator": ["oxwall"], "html_contains": ["powered by oxwall"], "url_path_contains": []}
+    ]
+}

@@ -1,0 +1,28 @@
+{
+    "comment": "Global mega-platforms excluded from engine scoring: they are single closed, centrally-hosted services rather than installable CMS/forum/blog 'engines', so counting them would distort the platform-market statistics. Edit freely.",
+    "domains": [
+        "facebook.com",
+        "fb.com",
+        "fb.watch",
+        "instagram.com",
+        "twitter.com",
+        "x.com",
+        "t.co",
+        "telegram.org",
+        "telegram.me",
+        "t.me",
+        "youtube.com",
+        "youtu.be",
+        "tiktok.com",
+        "linkedin.com",
+        "pinterest.com",
+        "reddit.com",
+        "whatsapp.com",
+        "snapchat.com",
+        "discord.com",
+        "discord.gg",
+        "wechat.com",
+        "line.me",
+        "viber.com"
+    ]
+}
