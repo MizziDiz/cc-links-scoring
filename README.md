@@ -59,10 +59,6 @@ python analyze.py --db links.db --sql "SELECT * FROM links LIMIT 10"
 
 Готовые отчёты в `analyze.py` — это SQL-запросы, эквивалентные тому, что обычно делают в Athena, но выполняются локально через `sqlite3`.
 
-## Мониторинг A-Parser → Telegram
-
-Отдельный самодостаточный инструмент в папке [`aparser_monitor/`](aparser_monitor/): уведомления в Telegram о завершении заданий, авариях (> 50% ошибок) и недоступности A-Parser, с кулдауном 8 часов. Настройка и запуск — в [`aparser_monitor/README.md`](aparser_monitor/README.md).
-
 ## Заметки
 
 - CDX-индекс часто содержит несколько снимков одного и того же URL в разные даты — в `pages` они схлопываются по `url` (`INSERT OR IGNORE`), это нормально для MVP.
