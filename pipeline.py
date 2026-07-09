@@ -101,27 +101,31 @@ def run_domains(domains, crawl, limit, db_path, delay, exclude_file):
 
 
 def _fetch_and_classify(record, excluded):
-    """Network + parsing only (thread-safe, no DB access) -- runs in worker threads."""
+    """Network + parsing only (thread-safe, no DB access) -- runs in worker threads.
+
+    Wrapped end-to-end: a single malformed page anywhere in ~1.4M real-world
+    pages must never crash the whole (multi-hour) run -- an uncaught exception
+    here would propagate through Future.result() and kill the main loop.
+    """
     url = record["url"]
     try:
         raw = fetch_warc_record(record["filename"], record["offset"], record["length"])
         html = parse_html_record(raw)
+        if html is None:
+            return {"url": url, "ok": False, "error": "no-html-record"}
+
+        soup = BeautifulSoup(html, "html.parser")
+        category, engine_name, _signal = classify_engine(html, url, soup=soup)
+        links = extract_links_from_html(html, url, soup=soup)
+        links = [(t, a) for t, a in links if not is_excluded(domain_of(t), excluded)]
+
+        return {
+            "url": url, "ok": True,
+            "tld": record.get("url_host_tld"),
+            "category": category, "engine_name": engine_name, "links": links,
+        }
     except Exception as e:
-        return {"url": url, "ok": False, "error": str(e)}
-
-    if html is None:
-        return {"url": url, "ok": False, "error": "no-html-record"}
-
-    soup = BeautifulSoup(html, "html.parser")
-    category, engine_name, _signal = classify_engine(html, url, soup=soup)
-    links = extract_links_from_html(html, url, soup=soup)
-    links = [(t, a) for t, a in links if not is_excluded(domain_of(t), excluded)]
-
-    return {
-        "url": url, "ok": True,
-        "tld": record.get("url_host_tld"),
-        "category": category, "engine_name": engine_name, "links": links,
-    }
+        return {"url": url, "ok": False, "error": f"{type(e).__name__}: {e}"}
 
 
 def run_countries(countries, crawl, total_limit, per_country_limit, priorities_file, db_path,

@@ -166,7 +166,12 @@ def extract_links_from_html(html: str, page_url: str, soup=None):
         href = a["href"].strip()
         if not href or href.startswith("#") or href.startswith("javascript:"):
             continue
-        absolute = urljoin(page_url, href)
+        try:
+            absolute = urljoin(page_url, href)
+        except ValueError:
+            # Malformed hrefs (bad IPv6 literals, etc.) are common in the wild
+            # across millions of real pages -- skip just this one link.
+            continue
         if not absolute.startswith(("http://", "https://")):
             continue
         links.append((absolute, a.get_text(strip=True)[:200]))
