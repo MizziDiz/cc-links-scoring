@@ -18,6 +18,7 @@ import gzip
 import io
 import json
 import os
+import time
 
 import duckdb
 import requests
@@ -42,12 +43,41 @@ def get_index_parts(crawl: str):
     return [BASE_URL + p for p in paths if "/subset=warc/" in p]
 
 
-def _connect():
+def _connect(proxy=None):
     con = duckdb.connect()
     con.execute("INSTALL httpfs; LOAD httpfs;")
     con.execute("SET memory_limit = '1GB';")
     con.execute("SET enable_object_cache = false;")
+    if proxy:
+        host, port, user, pw = proxy
+        con.execute(f"SET http_proxy = '{host}:{port}'")
+        if user:
+            con.execute(f"SET http_proxy_username = '{user}'")
+            con.execute(f"SET http_proxy_password = '{pw}'")
     return con
+
+
+def _parse_proxy_line(line: str):
+    parts = line.strip().split(":")
+    if len(parts) == 4:
+        return (parts[0], parts[1], parts[2], parts[3])
+    if len(parts) == 2:
+        return (parts[0], parts[1], None, None)
+    return None
+
+
+def load_proxies(path: str):
+    """Read `host:port:user:pass` (or `host:port`) lines into (host,port,user,pw) tuples."""
+    out = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            p = _parse_proxy_line(line)
+            if p:
+                out.append(p)
+    return out
 
 
 def _load_state(state_path):
@@ -65,16 +95,24 @@ def _save_state(state_path, scanned_parts, remaining, domain_counts):
     os.replace(tmp, state_path)
 
 
-def discover_by_countries(crawl: str, tld_budgets: dict, is_excluded_fn, out_path: str,
+def discover_by_countries(crawl: str, category_budgets: dict, tld_to_category: dict,
+                           is_excluded_fn, out_path: str,
                            max_parts=None, per_tld_cap: int = 250_000,
-                           max_per_domain: int = None, progress=None, resume: bool = True):
+                           max_per_domain: int = None, progress=None, resume: bool = True,
+                           max_retries: int = 6, retry_backoff: float = 8.0, proxies=None,
+                           part_delay: float = 0.0):
     """Scan Parquet index parts, streaming matches to out_path (JSONL) as they're found.
 
-    tld_budgets: {"co": 200000, "mx": 200000, ...} -- max pages to collect per ccTLD.
+    category_budgets: {"Colombia": 100000, "Other Africa": 100000, ...} -- max pages
+    to collect per *category*. A category can span several ccTLDs (a regional bucket),
+    which then share one combined budget rather than getting one budget each.
+    tld_to_category: {"co": "Colombia", "eg": "Other Africa", "ng": "Other Africa", ...}
+    -- maps every ccTLD being scanned to the category whose budget it draws from. For a
+    plain per-ccTLD run this is just the identity map {"co": "co", ...}.
     is_excluded_fn: callable(domain) -> bool, used to drop global mega-platforms.
     per_tld_cap: safety ceiling on rows taken *per ccTLD* from a single part -- the
-    actual per-part cap used is min(largest remaining budget among active ccTLDs,
-    this ceiling), so a ccTLD can pull its entire remaining budget from one "hot"
+    actual per-part cap used is min(largest remaining budget among active categories,
+    this ceiling), so a category can pull its entire remaining budget from one "hot"
     part in a single shot (observed: one part alone held 6.3M matches for one
     ccTLD; Ecuador's whole budget once came from a single part). Once a part is
     scanned it's never revisited, so under-capping here silently and permanently
@@ -86,12 +124,12 @@ def discover_by_countries(crawl: str, tld_budgets: dict, is_excluded_fn, out_pat
     itself, skewing the engine-market-share stats towards that one site's CMS).
     Resumable: progress (scanned part indices + remaining budget + per-domain counts)
     is checkpointed to `<out_path>.state.json` after every part.
-    Returns the final `remaining` dict (0 for ccTLDs that were fully filled).
+    Returns the final `remaining` dict (0 for categories that were fully filled).
     """
     state_path = out_path + ".state.json"
     state = _load_state(state_path) if resume else None
     scanned_parts = set(state["scanned_parts"]) if state else set()
-    remaining = state["remaining"] if state else dict(tld_budgets)
+    remaining = state["remaining"] if state else dict(category_budgets)
     domain_counts = state["domain_counts"] if state and "domain_counts" in state else {}
 
     parts = get_index_parts(crawl)
@@ -101,7 +139,21 @@ def discover_by_countries(crawl: str, tld_budgets: dict, is_excluded_fn, out_pat
     else:
         allowed_idx = set(range(len(parts)))
 
-    con = _connect()
+    # When proxies are supplied, each new connection binds to the next proxy so
+    # parquet reads rotate across exit IPs -- the fix for the CloudFront throttling
+    # that killed 192/300 parts on the un-proxied run. Reconnect every part (vs
+    # every _RECONNECT_EVERY) so the IP actually rotates.
+    _prox_idx = [0]
+
+    def make_conn():
+        p = None
+        if proxies:
+            p = proxies[_prox_idx[0] % len(proxies)]
+            _prox_idx[0] += 1
+        return _connect(p)
+
+    reconnect_every = 1 if proxies else _RECONNECT_EVERY
+    con = make_conn()
     out_mode = "a" if (state and os.path.exists(out_path)) else "w"
     out_f = open(out_path, out_mode, encoding="utf-8")
 
@@ -109,7 +161,13 @@ def discover_by_countries(crawl: str, tld_budgets: dict, is_excluded_fn, out_pat
         for i, part_url in enumerate(parts):
             if i not in allowed_idx or i in scanned_parts:
                 continue
-            active_tlds = [t for t, v in remaining.items() if v > 0]
+            active_cats = {c for c, v in remaining.items() if v > 0}
+            if not active_cats:
+                break
+            # Query every ccTLD that still feeds an unfilled category. Several
+            # ccTLDs can map to the same category (a regional bucket) and draw
+            # down its shared budget together.
+            active_tlds = [t for t, c in tld_to_category.items() if c in active_cats]
             if not active_tlds:
                 break
 
@@ -129,7 +187,7 @@ def discover_by_countries(crawl: str, tld_budgets: dict, is_excluded_fn, out_pat
             # is marked scanned it's never revisited. So size the cap to the largest
             # remaining need among active ccTLDs (bounded by a sane ceiling so one
             # freak part can't blow up memory).
-            effective_cap = min(max(remaining[t] for t in active_tlds), per_tld_cap)
+            effective_cap = min(max(remaining[c] for c in active_cats), per_tld_cap)
             query = f"""
                 SELECT url, url_host_tld, url_host_registered_domain,
                        warc_filename, warc_record_offset, warc_record_length
@@ -142,17 +200,43 @@ def discover_by_countries(crawl: str, tld_budgets: dict, is_excluded_fn, out_pat
                 )
                 WHERE rn <= {effective_cap}
             """
-            try:
-                rows = con.execute(query).fetchall()
-            except Exception as e:
+            # Reading the parquet parts pulls them straight from data.commoncrawl.org
+            # over HTTPS with no proxy, so a long fast scan gets CloudFront-throttled
+            # (surfaces as DuckDB "HTTP 0 Internal Server Error"). Retry with backoff
+            # on a fresh connection; the throttle is transient and clears on cooldown.
+            rows = None
+            last_err = None
+            for attempt in range(max_retries):
+                try:
+                    rows = con.execute(query).fetchall()
+                    break
+                except Exception as e:
+                    last_err = e
+                    try:
+                        con.close()
+                    except Exception:
+                        pass
+                    gc.collect()
+                    con = make_conn()  # rotate to a different exit IP on throttle
+                    if attempt < max_retries - 1:
+                        sleep_s = min(retry_backoff * (2 ** attempt), 300.0)
+                        if progress:
+                            progress(f"part {i} read failed ({e}); "
+                                     f"retry {attempt + 1}/{max_retries - 1} in {sleep_s:.0f}s")
+                        time.sleep(sleep_s)
+            if rows is None:
                 if progress:
-                    progress(f"skip part {i} ({e})")
-                scanned_parts.add(i)
+                    progress(f"skip part {i} after {max_retries} attempts ({last_err}) "
+                             f"-- left UNscanned so a later resume retries it")
+                # Deliberately NOT added to scanned_parts: marking a throttled part
+                # scanned would permanently discard everything in it (this is exactly
+                # how Japan/Malaysia/Singapore/Ecuador/Korea came back empty).
                 continue
 
             found_this_part = 0
             for url, tld, reg_domain, warc_filename, offset, length in rows:
-                if remaining.get(tld, 0) <= 0:
+                cat = tld_to_category.get(tld)
+                if cat is None or remaining.get(cat, 0) <= 0:
                     continue
                 if is_excluded_fn(reg_domain):
                     continue
@@ -163,9 +247,10 @@ def discover_by_countries(crawl: str, tld_budgets: dict, is_excluded_fn, out_pat
                     domain_counts[reg_domain] = dcount + 1
                 out_f.write(json.dumps({
                     "url": url, "url_host_tld": tld, "url_host_registered_domain": reg_domain,
+                    "bucket": cat,
                     "filename": warc_filename, "offset": offset, "length": length,
                 }) + "\n")
-                remaining[tld] -= 1
+                remaining[cat] -= 1
                 found_this_part += 1
             out_f.flush()
 
@@ -176,10 +261,15 @@ def discover_by_countries(crawl: str, tld_budgets: dict, is_excluded_fn, out_pat
                 progress(f"part {i+1}/{len(parts)}: +{found_this_part} matches; remaining: {remaining}")
 
             del rows
-            if len(scanned_parts) % _RECONNECT_EVERY == 0:
+            if len(scanned_parts) % reconnect_every == 0:
                 con.close()
                 gc.collect()
-                con = _connect()
+                con = make_conn()
+            # Pace direct (un-proxied) reads so the sustained request rate stays under
+            # CloudFront's throttle threshold -- a fast unpaced scan is what got 192
+            # parts HTTP-0'd on the first run.
+            if part_delay:
+                time.sleep(part_delay)
     finally:
         out_f.close()
         con.close()

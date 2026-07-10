@@ -122,10 +122,38 @@ def get_session(pool_size: int = 32) -> requests.Session:
     return session
 
 
+_S3_BUCKET = "commoncrawl"
+_s3_client = None
+
+
+def enable_s3(pool_size: int = 64):
+    """Fetch WARC records straight from the CommonCrawl S3 bucket instead of the
+    CloudFront mirror (data.commoncrawl.org). S3 has no per-IP throttle, so this
+    is the high-throughput path -- but the bucket denies anonymous access from
+    outside AWS, so it only works when running inside AWS (e.g. an EC2 instance
+    whose IAM role can read S3). Requests are signed with the instance's default
+    credential chain; no CloudFront, no proxy, no rate limiter needed.
+    """
+    global _s3_client
+    import boto3
+    from botocore.config import Config
+    _s3_client = boto3.client(
+        "s3", region_name="us-east-1",
+        config=Config(max_pool_connections=pool_size,
+                      retries={"max_attempts": 5, "mode": "adaptive"}),
+    )
+
+
 def fetch_warc_record(filename: str, offset: int, length: int, timeout: int = 30) -> bytes:
     """Download the raw bytes of one WARC record using a byte-range request."""
-    rate_limiter.wait()
     end = int(offset) + int(length) - 1
+    if _s3_client is not None:
+        # S3 GetObject with a Range: no rate limiter (S3 handles high concurrency),
+        # signed by the instance role.
+        resp = _s3_client.get_object(Bucket=_S3_BUCKET, Key=filename,
+                                     Range=f"bytes={offset}-{end}")
+        return resp["Body"].read()
+    rate_limiter.wait()
     headers = {"Range": f"bytes={offset}-{end}"}
     url = DATA_BASE_URL + filename
     proxies = None

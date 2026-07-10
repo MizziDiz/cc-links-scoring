@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS pages (
     timestamp TEXT,
     tld TEXT,
     country TEXT,
+    bucket TEXT,
     engine_category TEXT,
     engine_name TEXT,
     outlink_count INTEGER,
@@ -28,6 +29,7 @@ CREATE INDEX IF NOT EXISTS idx_links_source ON links(source_url);
 CREATE INDEX IF NOT EXISTS idx_links_target_domain ON links(target_domain);
 CREATE INDEX IF NOT EXISTS idx_pages_engine ON pages(engine_category);
 CREATE INDEX IF NOT EXISTS idx_pages_country ON pages(country);
+CREATE INDEX IF NOT EXISTS idx_pages_bucket ON pages(bucket);
 """
 
 
@@ -39,14 +41,14 @@ def init_db(path: str) -> sqlite3.Connection:
 
 
 def insert_page(conn, url: str, domain: str, crawl: str, timestamp: str,
-                 tld: str = None, country: str = None,
+                 tld: str = None, country: str = None, bucket: str = None,
                  engine_category: str = None, engine_name: str = None,
                  outlink_count: int = None):
     conn.execute(
         """INSERT OR IGNORE INTO pages
-           (url, domain, crawl, timestamp, tld, country, engine_category, engine_name, outlink_count)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (url, domain, crawl, timestamp, tld, country, engine_category, engine_name, outlink_count),
+           (url, domain, crawl, timestamp, tld, country, bucket, engine_category, engine_name, outlink_count)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (url, domain, crawl, timestamp, tld, country, bucket, engine_category, engine_name, outlink_count),
     )
 
 

@@ -9,3 +9,6 @@ __pycache__/
 
 # Real proxy credentials -- never commit
 proxies.txt
+
+# Run logs
+*.log

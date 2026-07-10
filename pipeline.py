@@ -37,8 +37,8 @@ from cc_links.fetch import fetch_warc_record, parse_html_record, extract_links_f
 from cc_links.db import init_db, insert_page, insert_links
 from cc_links.engines import classify_engine
 from cc_links.exclusions import load_excluded_domains, is_excluded
-from cc_links.countries import load_priorities, allocate_budget, country_name
-from cc_links.cc_index import discover_by_countries, load_candidates, load_candidates_shuffled
+from cc_links.countries import load_priorities, allocate_budget, country_name, load_category_map
+from cc_links.cc_index import discover_by_countries, load_candidates, load_candidates_shuffled, load_proxies
 
 
 def process_page(conn, crawl, url, filename, offset, length, excluded, tld=None, country=None, delay=0.0):
@@ -121,7 +121,7 @@ def _fetch_and_classify(record, excluded):
 
         return {
             "url": url, "ok": True,
-            "tld": record.get("url_host_tld"),
+            "tld": record.get("url_host_tld"), "bucket": record.get("bucket"),
             "category": category, "engine_name": engine_name, "links": links,
         }
     except Exception as e:
@@ -130,23 +130,46 @@ def _fetch_and_classify(record, excluded):
 
 def run_countries(countries, crawl, total_limit, per_country_limit, priorities_file, db_path,
                    workers, max_parts, exclude_file, candidates_file, commit_every, skip_discovery,
-                   rate_limit, max_per_domain, proxy, proxy_file, store_links):
+                   rate_limit, max_per_domain, proxy, proxy_file, store_links,
+                   categories_file, per_category_limit, discovery_only, discover_delay, source):
     excluded = load_excluded_domains(exclude_file)
     candidates_file = candidates_file or (db_path + ".candidates.jsonl")
     fetch_mod.rate_limiter.set_rate(rate_limit)
-    if proxy_file:
+    discovery_proxies = None
+    if source == "s3":
+        # High-throughput path for running inside AWS: fetch WARC records straight
+        # from S3 (no CloudFront per-IP throttle, no proxies). Requires an EC2 role
+        # that can read S3. Discovery still uses the CloudFront/parquet path.
+        fetch_mod.enable_s3(pool_size=max(workers * 2, 64))
+        print(f"[source] fetching WARC records from s3://commoncrawl (signed, no rate limit)")
+    elif proxy_file:
         n = fetch_mod.load_proxy_file(proxy_file)
+        discovery_proxies = load_proxies(proxy_file)  # rotate index reads across IPs too
         print(f"[proxy] rotating across {n} proxies from {proxy_file}")
     elif proxy:
         fetch_mod.set_proxy(proxy)
         print(f"[proxy] routing fetches through {proxy.split('@')[-1] if '@' in proxy else proxy}")
 
-    if per_country_limit:
-        budgets = {t: per_country_limit for t in countries}
+    # Budgets are keyed by "category". A category may be a single ccTLD (plain
+    # per-country run) or a named bucket spanning several ccTLDs that share one
+    # budget (--categories-file). tld_to_category maps each scanned ccTLD to the
+    # budget it draws from; for a plain run it's the identity map.
+    if categories_file:
+        categories, tld_to_category = load_category_map(categories_file)
+        if per_category_limit:
+            budgets = {name: per_category_limit for name in categories}
+        else:
+            budgets = allocate_budget({name: 1.0 for name in categories}, total_limit)
+        is_tld_label = False
     else:
-        priorities = load_priorities(priorities_file, countries=countries)
-        priorities = {t: w for t, w in priorities.items() if t in countries}
-        budgets = allocate_budget(priorities, total_limit)
+        tld_to_category = {t: t for t in countries}
+        if per_country_limit:
+            budgets = {t: per_country_limit for t in countries}
+        else:
+            priorities = load_priorities(priorities_file, countries=countries)
+            priorities = {t: w for t, w in priorities.items() if t in countries}
+            budgets = allocate_budget(priorities, total_limit)
+        is_tld_label = True
     print(f"[budget] {budgets}")
 
     if not skip_discovery:
@@ -154,15 +177,29 @@ def run_countries(countries, crawl, total_limit, per_country_limit, priorities_f
             print(f"[discover] {msg}")
 
         shortfall = discover_by_countries(
-            crawl, budgets, lambda d: is_excluded(d, excluded),
-            out_path=candidates_file, max_parts=max_parts, max_per_domain=max_per_domain, progress=progress,
+            crawl, budgets, tld_to_category, lambda d: is_excluded(d, excluded),
+            out_path=candidates_file, max_parts=max_parts, max_per_domain=max_per_domain,
+            progress=progress, proxies=discovery_proxies, part_delay=discover_delay,
         )
-        for tld, remaining in shortfall.items():
+        for name, remaining in shortfall.items():
             if remaining > 0:
-                print(f"[discover] WARNING: {tld} ({country_name(tld)}) short by {remaining} pages "
+                label = f"{name} ({country_name(name)})" if is_tld_label else name
+                print(f"[discover] WARNING: {label} short by {remaining} pages "
                       f"-- crawl may not have enough matching pages, or increase --max-parts")
     else:
         print(f"[discover] skipped, reusing {candidates_file}")
+
+    if discovery_only:
+        from collections import Counter as _Counter
+        by_bucket = _Counter()
+        for rec in load_candidates(candidates_file):
+            by_bucket[rec.get("bucket", rec.get("url_host_tld"))] += 1
+        total = sum(by_bucket.values())
+        print(f"[discovery-only] {total} candidates in {candidates_file}:")
+        for name, n in sorted(by_bucket.items(), key=lambda kv: -kv[1]):
+            print(f"   {n:>7}  {name}")
+        print(f"[discovery-only] done -- rerun with --skip-discovery to fetch")
+        return
 
     conn = init_db(db_path)
     already = {row[0] for row in conn.execute("SELECT url FROM pages")}
@@ -202,7 +239,7 @@ def run_countries(countries, crawl, total_limit, per_country_limit, priorities_f
                         consecutive_failures = 0
                         cname = country_name(res["tld"])
                         insert_page(conn, res["url"], domain_of(res["url"]), crawl, "",
-                                    tld=res["tld"], country=cname,
+                                    tld=res["tld"], country=cname, bucket=res.get("bucket"),
                                     engine_category=res["category"], engine_name=res["engine_name"],
                                     outlink_count=len(res["links"]))
                         if store_links:
@@ -255,7 +292,14 @@ def main():
     p_domains.add_argument("--exclude-file", help="Extra exclusions JSON (adds to cc_links/exclusions.json)")
 
     p_countries = sub.add_parser("countries", help="Discover pages across ccTLDs via the Parquet cc-index (DuckDB)")
-    p_countries.add_argument("--countries", nargs="+", required=True, help="ccTLDs, e.g. co cl pe ec uy mx ar")
+    p_countries.add_argument("--countries", nargs="+", help="ccTLDs, e.g. co cl pe ec uy mx ar "
+                                                             "(omit when using --categories-file)")
+    p_countries.add_argument("--categories-file", help="JSON grouping ccTLDs into named categories that "
+                                                       "each share one budget: {\"Other Africa\": [\"eg\", "
+                                                       "\"ng\", ...], \"Colombia\": [\"co\"], ...}. Use with "
+                                                       "--per-category-limit. Replaces --countries.")
+    p_countries.add_argument("--per-category-limit", type=int,
+                              help="Flat budget per category (with --categories-file), e.g. 100000")
     p_countries.add_argument("--crawl", default="CC-MAIN-2026-25")
     p_countries.add_argument("--total-limit", type=int, default=300,
                               help="Total pages split by --priorities (ignored if --per-country-limit is set)")
@@ -270,6 +314,11 @@ def main():
     p_countries.add_argument("--max-per-domain", type=int, default=None,
                               help="Cap pages taken from any single registered domain during discovery "
                                    "(prevents one high-volume site from dominating a ccTLD's sample)")
+    p_countries.add_argument("--source", choices=["cloudfront", "s3"], default="cloudfront",
+                              help="Where to fetch WARC records: 'cloudfront' (data.commoncrawl.org, "
+                                   "per-IP throttled, works anywhere) or 's3' (s3://commoncrawl, no "
+                                   "throttle, but only from inside AWS -- e.g. an EC2 instance with an "
+                                   "S3-read IAM role). Discovery always uses the CloudFront/parquet path.")
     p_countries.add_argument("--proxy", help="Single proxy URL, e.g. a rotating-gateway endpoint "
                                               "http://user:pass@gateway:port")
     p_countries.add_argument("--proxy-file", help="File with one proxy per line (host:port:user:pass) -- "
@@ -283,6 +332,13 @@ def main():
     p_countries.add_argument("--commit-every", type=int, default=200, help="SQLite commit interval (# pages)")
     p_countries.add_argument("--skip-discovery", action="store_true",
                               help="Reuse an existing candidates file instead of re-scanning the index")
+    p_countries.add_argument("--discovery-only", action="store_true",
+                              help="Run only the index scan (write + summarize candidates), then stop "
+                                   "before fetching. Resume the fetch later with --skip-discovery.")
+    p_countries.add_argument("--discover-delay", type=float, default=0.0,
+                              help="Seconds to pause between index parts during discovery -- paces direct "
+                                   "(un-proxied) parquet reads under CloudFront's throttle threshold. "
+                                   "Try 1-2s for a large multi-part scan.")
     p_countries.add_argument("--no-links", action="store_true",
                               help="Don't store individual outbound links (only their count per page). "
                                    "For engine-market-share analysis the links table isn't needed and is "
@@ -294,10 +350,14 @@ def main():
     if args.mode == "domains":
         run_domains(args.domains, args.crawl, args.limit, args.db, args.delay, args.exclude_file)
     elif args.mode == "countries":
+        if bool(args.countries) == bool(args.categories_file):
+            parser.error("provide exactly one of --countries or --categories-file")
         run_countries(args.countries, args.crawl, args.total_limit, args.per_country_limit,
                        args.priorities, args.db, args.workers, args.max_parts, args.exclude_file,
                        args.candidates_file, args.commit_every, args.skip_discovery, args.rate_limit,
-                       args.max_per_domain, args.proxy, args.proxy_file, not args.no_links)
+                       args.max_per_domain, args.proxy, args.proxy_file, not args.no_links,
+                       args.categories_file, args.per_category_limit, args.discovery_only,
+                       args.discover_delay, args.source)
 
 
 if __name__ == "__main__":
