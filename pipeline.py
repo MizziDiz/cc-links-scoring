@@ -25,6 +25,7 @@ cc_links/exclusions.json.
 import argparse
 import sys
 import time
+import zlib
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, FIRST_COMPLETED, wait
 
@@ -138,7 +139,8 @@ def _fetch_and_classify(record, excluded, extract_links=True):
 def run_countries(countries, crawl, total_limit, per_country_limit, priorities_file, db_path,
                    workers, max_parts, exclude_file, candidates_file, commit_every, skip_discovery,
                    rate_limit, max_per_domain, proxy, proxy_file, store_links,
-                   categories_file, per_category_limit, discovery_only, discover_delay, source):
+                   categories_file, per_category_limit, discovery_only, discover_delay, source,
+                   shard=None):
     excluded = load_excluded_domains(exclude_file)
     candidates_file = candidates_file or (db_path + ".candidates.jsonl")
     fetch_mod.rate_limiter.set_rate(rate_limit)
@@ -213,15 +215,30 @@ def run_countries(countries, crawl, total_limit, per_country_limit, priorities_f
     already = {row[0] for row in conn.execute("SELECT url FROM pages")}
     print(f"[resume] {len(already)} pages already stored, will be skipped")
 
+    # --shard i/N: run N processes in parallel (one per CPU core, each to its own
+    # --db) over disjoint slices of the candidates, split by a stable hash of the
+    # URL so the split needs no coordination between processes. Merge the shard
+    # DBs afterwards with merge_shards.py.
+    shard_i = shard_n = None
+    if shard:
+        shard_i, shard_n = (int(x) for x in shard.split("/"))
+        print(f"[shard] this process handles slice {shard_i} of {shard_n}")
+
     def candidate_iter():
         # Shuffled so a rate-limit block mid-run loses a random slice of every
         # country instead of wiping out whichever ccTLDs hadn't been reached yet
         # (discovery writes results in contiguous per-ccTLD blocks).
         for rec in load_candidates_shuffled(candidates_file):
+            if shard_n is not None and zlib.crc32(rec["url"].encode()) % shard_n != shard_i:
+                continue
             if rec["url"] not in already:
                 yield rec
 
-    total_count = sum(1 for _ in load_candidates(candidates_file))
+    if shard_n is not None:
+        total_count = sum(1 for r in load_candidates(candidates_file)
+                          if zlib.crc32(r["url"].encode()) % shard_n == shard_i)
+    else:
+        total_count = sum(1 for _ in load_candidates(candidates_file))
     total_links = 0
     processed = 0
     consecutive_failures = 0
@@ -343,6 +360,9 @@ def main():
     p_countries.add_argument("--discovery-only", action="store_true",
                               help="Run only the index scan (write + summarize candidates), then stop "
                                    "before fetching. Resume the fetch later with --skip-discovery.")
+    p_countries.add_argument("--shard", help="Run one of N parallel workers over a disjoint URL "
+                                             "slice, e.g. --shard 0/4 (each shard needs its own --db). "
+                                             "Merge the shard DBs afterwards with merge_shards.py.")
     p_countries.add_argument("--discover-delay", type=float, default=0.0,
                               help="Seconds to pause between index parts during discovery -- paces direct "
                                    "(un-proxied) parquet reads under CloudFront's throttle threshold. "
@@ -365,7 +385,7 @@ def main():
                        args.candidates_file, args.commit_every, args.skip_discovery, args.rate_limit,
                        args.max_per_domain, args.proxy, args.proxy_file, not args.no_links,
                        args.categories_file, args.per_category_limit, args.discovery_only,
-                       args.discover_delay, args.source)
+                       args.discover_delay, args.source, args.shard)
 
 
 if __name__ == "__main__":
