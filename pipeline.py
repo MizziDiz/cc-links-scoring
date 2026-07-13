@@ -100,12 +100,16 @@ def run_domains(domains, crawl, limit, db_path, delay, exclude_file):
     conn.close()
 
 
-def _fetch_and_classify(record, excluded):
+def _fetch_and_classify(record, excluded, extract_links=True):
     """Network + parsing only (thread-safe, no DB access) -- runs in worker threads.
 
     Wrapped end-to-end: a single malformed page anywhere in ~1.4M real-world
     pages must never crash the whole (multi-hour) run -- an uncaught exception
     here would propagate through Future.result() and kill the main loop.
+
+    extract_links=False (i.e. --no-links) skips the <a href> parse+urljoin loop
+    entirely -- pure CPU savings, since those links would only be counted and
+    thrown away. This roughly halves per-page CPU on the classify-only path.
     """
     url = record["url"]
     try:
@@ -116,8 +120,11 @@ def _fetch_and_classify(record, excluded):
 
         soup = make_soup(html)
         category, engine_name, _signal = classify_engine(html, url, soup=soup)
-        links = extract_links_from_html(html, url, soup=soup)
-        links = [(t, a) for t, a in links if not is_excluded(domain_of(t), excluded)]
+        if extract_links:
+            links = extract_links_from_html(html, url, soup=soup)
+            links = [(t, a) for t, a in links if not is_excluded(domain_of(t), excluded)]
+        else:
+            links = []
 
         return {
             "url": url, "ok": True,
@@ -226,7 +233,7 @@ def run_countries(countries, crawl, total_limit, per_country_limit, priorities_f
 
         def fill():
             for rec in it:
-                pending.add(ex.submit(_fetch_and_classify, rec, excluded))
+                pending.add(ex.submit(_fetch_and_classify, rec, excluded, store_links))
                 if len(pending) >= workers * 4:
                     break
 
