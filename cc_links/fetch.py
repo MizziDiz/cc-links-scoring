@@ -9,8 +9,19 @@ import time
 from io import BytesIO
 from urllib.parse import urljoin, urlparse
 
+import warnings
+
 import requests
 from bs4 import BeautifulSoup
+
+# Some fetched pages are really XML (RSS/sitemaps) served as text/html; bs4 warns
+# about parsing XML with an HTML parser. It's harmless here (they just don't match
+# any CMS footprint), so silence the noise across millions of pages.
+try:
+    from bs4 import XMLParsedAsHTMLWarning
+    warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
+except Exception:
+    pass
 from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
 from warcio.archiveiterator import ArchiveIterator
