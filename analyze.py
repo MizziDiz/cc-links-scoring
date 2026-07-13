@@ -67,6 +67,67 @@ REPORTS = {
         GROUP BY country, tld
         ORDER BY pages_crawled DESC;
     """,
+    "bucket-coverage": """
+        SELECT bucket,
+               COUNT(*) AS pages,
+               SUM(CASE WHEN engine_category IS NOT NULL THEN 1 ELSE 0 END) AS classified,
+               ROUND(100.0 * SUM(CASE WHEN engine_category IS NULL THEN 1 ELSE 0 END) / COUNT(*), 1) AS unclassified_pct
+        FROM pages
+        WHERE bucket IS NOT NULL
+        GROUP BY bucket
+        ORDER BY pages DESC;
+    """,
+    "engine-by-bucket": """
+        SELECT bucket, engine_category, COUNT(*) AS pages
+        FROM pages
+        WHERE engine_category IS NOT NULL AND bucket IS NOT NULL
+        GROUP BY bucket, engine_category
+        ORDER BY bucket, pages DESC;
+    """,
+    "engine-share-by-bucket": """
+        SELECT bucket,
+               engine_category,
+               COUNT(*) AS pages,
+               ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (PARTITION BY bucket), 1) AS pct_of_bucket
+        FROM pages
+        WHERE engine_category IS NOT NULL AND bucket IS NOT NULL
+        GROUP BY bucket, engine_category
+        ORDER BY bucket, pages DESC;
+    """,
+    "platform-share-by-bucket": """
+        SELECT bucket,
+               engine_name,
+               COUNT(*) AS pages,
+               ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (PARTITION BY bucket), 1) AS pct_of_bucket
+        FROM pages
+        WHERE engine_name IS NOT NULL AND bucket IS NOT NULL
+        GROUP BY bucket, engine_name
+        ORDER BY bucket, pages DESC;
+    """,
+    "engine-share-by-bucket-sites": """
+        WITH sites AS (
+            SELECT DISTINCT bucket, engine_category, domain
+            FROM pages
+            WHERE engine_category IS NOT NULL AND bucket IS NOT NULL
+        )
+        SELECT bucket,
+               engine_category,
+               COUNT(*) AS sites,
+               ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (PARTITION BY bucket), 1) AS pct_of_bucket_sites
+        FROM sites
+        GROUP BY bucket, engine_category
+        ORDER BY bucket, sites DESC;
+    """,
+    "platform-sites": """
+        SELECT engine_category,
+               engine_name,
+               COUNT(DISTINCT domain) AS sites,
+               COUNT(*) AS pages
+        FROM pages
+        WHERE engine_name IS NOT NULL
+        GROUP BY engine_category, engine_name
+        ORDER BY sites DESC;
+    """,
     "unclassified-rate": """
         SELECT
             COUNT(*) AS total_pages,

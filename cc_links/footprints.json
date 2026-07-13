@@ -1,45 +1,77 @@
 {
-    "comment": "Heuristic footprints per engine category, used for platform-market scoring (generator meta tag, page text, URL path). Extend freely -- this is not exhaustive.",
+    "comment": "Heuristic footprints per engine, used for platform-market scoring (generator meta tag, page text, URL path). Matched top-to-bottom, first hit wins -- so specific platforms come BEFORE broad ones (e.g. WooCommerce before WordPress, since a WooCommerce store also contains wp-content). WordPress is the last CMS entry as a catch-all. Categories: CMS, E-commerce, Site Builder (W3Techs-style platform detection) plus the link-target types Forum, Guestbook, Trackback, Image Comment, Directory, Article, Microblog, Social Network, Blog Comment. Extend freely -- not exhaustive.",
     "engines": [
         {"category": "Forum", "name": "phpBB", "generator": ["phpbb"], "html_contains": ["powered by phpbb"], "url_path_contains": ["viewtopic.php", "viewforum.php"]},
         {"category": "Forum", "name": "vBulletin", "generator": ["vbulletin"], "html_contains": ["powered by vbulletin"], "url_path_contains": ["showthread.php", "forumdisplay.php"]},
         {"category": "Forum", "name": "SMF", "generator": ["simple machines"], "html_contains": ["powered by smf", "simple machines forum"], "url_path_contains": ["index.php?board", "index.php?topic"]},
         {"category": "Forum", "name": "XenForo", "generator": ["xenforo"], "html_contains": ["powered by xenforo"], "url_path_contains": ["/threads/", "/forums/"]},
         {"category": "Forum", "name": "MyBB", "generator": ["mybb"], "html_contains": ["powered by mybb"], "url_path_contains": ["showthread.php?tid"]},
-        {"category": "Forum", "name": "Discourse", "generator": ["discourse"], "html_contains": [], "url_path_contains": ["/t/"]},
-        {"category": "Forum", "name": "Invision Community", "generator": ["invision"], "html_contains": ["powered by invision"], "url_path_contains": []},
+        {"category": "Forum", "name": "Discourse", "generator": ["discourse"], "html_contains": ["discourse-application"], "url_path_contains": []},
+        {"category": "Forum", "name": "Flarum", "generator": ["flarum"], "html_contains": ["flarum"], "url_path_contains": []},
+        {"category": "Forum", "name": "NodeBB", "generator": ["nodebb"], "html_contains": ["nodebb"], "url_path_contains": []},
+        {"category": "Forum", "name": "Invision Community", "generator": ["invision"], "html_contains": ["powered by invision", "ipsfocus"], "url_path_contains": []},
 
-        {"category": "Blog Comment", "name": "WordPress", "generator": ["wordpress"], "html_contains": ["wp-content", "wp-includes"], "url_path_contains": ["wp-comments-post.php", "/wp-content/"]},
-        {"category": "Blog Comment", "name": "Blogger", "generator": ["blogger"], "html_contains": ["blogspot.com"], "url_path_contains": []},
-        {"category": "Blog Comment", "name": "Movable Type", "generator": ["movable type"], "html_contains": ["powered by movable type"], "url_path_contains": ["mt-comments.cgi"]},
-        {"category": "Blog Comment", "name": "Drupal", "generator": ["drupal"], "html_contains": ["sites/default/files"], "url_path_contains": ["/comment/reply/"]},
+        {"category": "E-commerce", "name": "WooCommerce", "generator": [], "html_contains": ["wp-content/plugins/woocommerce", "woocommerce-page"], "url_path_contains": []},
+        {"category": "E-commerce", "name": "Shopify", "generator": ["shopify"], "html_contains": ["cdn.shopify.com", "myshopify.com", "shopify.theme"], "url_path_contains": []},
+        {"category": "E-commerce", "name": "Magento", "generator": ["magento"], "html_contains": ["/skin/frontend/", "mage/cookies", "magento_", "/static/version"], "url_path_contains": []},
+        {"category": "E-commerce", "name": "PrestaShop", "generator": ["prestashop"], "html_contains": ["prestashop", "/modules/ps_"], "url_path_contains": []},
+        {"category": "E-commerce", "name": "OpenCart", "generator": ["opencart"], "html_contains": ["catalog/view/theme", "opencart"], "url_path_contains": ["route=product/", "route=common"]},
+        {"category": "E-commerce", "name": "BigCommerce", "generator": [], "html_contains": ["cdn11.bigcommerce.com", "bigcommerce.com/stencil"], "url_path_contains": []},
+        {"category": "E-commerce", "name": "Ecwid", "generator": [], "html_contains": ["app.ecwid.com", "ecwid_"], "url_path_contains": []},
+        {"category": "E-commerce", "name": "InSales", "generator": ["insales"], "html_contains": ["static.insales", "insales.ru"], "url_path_contains": []},
+        {"category": "E-commerce", "name": "VirtueMart", "generator": [], "html_contains": ["virtuemart"], "url_path_contains": ["option=com_virtuemart"]},
 
-        {"category": "Guestbook", "name": "Generic Guestbook", "generator": [], "html_contains": ["sign the guestbook", "view the guestbook", "guestbook entries"], "url_path_contains": ["guestbook.cgi", "gbook.php", "signbook.php"]},
-        {"category": "Guestbook", "name": "Advanced Guestbook", "generator": [], "html_contains": ["advanced guestbook"], "url_path_contains": ["addentry.php"]},
-
-        {"category": "Trackback", "name": "WordPress Trackback", "generator": [], "html_contains": ["trackback ping", "trackback url"], "url_path_contains": ["/trackback/", "wp-trackback.php"]},
-        {"category": "Trackback", "name": "Movable Type Trackback", "generator": [], "html_contains": ["send trackback"], "url_path_contains": ["mt-tb.cgi"]},
+        {"category": "Site Builder", "name": "Wix", "generator": ["wix.com"], "html_contains": ["static.wixstatic.com", "wixsite.com", "wix-warmup-data"], "url_path_contains": []},
+        {"category": "Site Builder", "name": "Squarespace", "generator": ["squarespace"], "html_contains": ["static1.squarespace.com", "squarespace-cdn.com", "squarespace.com"], "url_path_contains": []},
+        {"category": "Site Builder", "name": "Webflow", "generator": ["webflow"], "html_contains": ["assets.website-files.com", "assets-global.website-files.com"], "url_path_contains": []},
+        {"category": "Site Builder", "name": "Weebly", "generator": ["weebly"], "html_contains": ["cdn2.editmysite.com", "weebly.com"], "url_path_contains": []},
+        {"category": "Site Builder", "name": "Tilda", "generator": ["tilda"], "html_contains": ["static.tildacdn.com", "tilda.ws", "tildacdn"], "url_path_contains": []},
+        {"category": "Site Builder", "name": "Jimdo", "generator": ["jimdo"], "html_contains": ["jimdo.com", "jimstatic.com"], "url_path_contains": []},
+        {"category": "Site Builder", "name": "Google Sites", "generator": [], "html_contains": ["sites.google.com", "gstatic.com/_/sites"], "url_path_contains": []},
 
         {"category": "Image Comment", "name": "Coppermine", "generator": [], "html_contains": ["coppermine photo gallery"], "url_path_contains": ["displayimage.php"]},
         {"category": "Image Comment", "name": "Piwigo", "generator": ["piwigo"], "html_contains": ["powered by piwigo"], "url_path_contains": []},
         {"category": "Image Comment", "name": "Gallery", "generator": ["gallery"], "html_contains": ["powered by gallery"], "url_path_contains": ["/gallery2/", "/main.php?g2_"]},
         {"category": "Image Comment", "name": "Zenphoto", "generator": ["zenphoto"], "html_contains": ["powered by zenphoto"], "url_path_contains": []},
 
+        {"category": "Guestbook", "name": "Advanced Guestbook", "generator": [], "html_contains": ["advanced guestbook"], "url_path_contains": ["addentry.php"]},
+        {"category": "Guestbook", "name": "Generic Guestbook", "generator": [], "html_contains": ["sign the guestbook", "view the guestbook", "guestbook entries"], "url_path_contains": ["guestbook.cgi", "gbook.php", "signbook.php"]},
+
+        {"category": "Trackback", "name": "Movable Type Trackback", "generator": [], "html_contains": ["send trackback"], "url_path_contains": ["mt-tb.cgi"]},
+        {"category": "Trackback", "name": "WordPress Trackback", "generator": [], "html_contains": ["trackback ping", "trackback url"], "url_path_contains": ["/trackback/", "wp-trackback.php"]},
+
+        {"category": "Microblog", "name": "Tumblr", "generator": ["tumblr"], "html_contains": ["tumblr.com/theme", "assets.tumblr.com"], "url_path_contains": []},
+        {"category": "Microblog", "name": "Mastodon", "generator": ["mastodon"], "html_contains": ["id=\"mastodon\"", "id='mastodon'"], "url_path_contains": ["/api/v1/instance"]},
+        {"category": "Microblog", "name": "GNU Social", "generator": ["statusnet", "gnu social"], "html_contains": ["powered by gnu social"], "url_path_contains": []},
+
+        {"category": "Social Network", "name": "BuddyPress", "generator": ["buddypress"], "html_contains": ["buddypress"], "url_path_contains": ["/members/"]},
+        {"category": "Social Network", "name": "Elgg", "generator": ["elgg"], "html_contains": ["powered by elgg", "elgg.config"], "url_path_contains": []},
+        {"category": "Social Network", "name": "PHPFox", "generator": ["phpfox"], "html_contains": ["powered by phpfox"], "url_path_contains": []},
+        {"category": "Social Network", "name": "Dolphin", "generator": ["dolphin"], "html_contains": ["powered by dolphin"], "url_path_contains": []},
+        {"category": "Social Network", "name": "Oxwall", "generator": ["oxwall"], "html_contains": ["powered by oxwall"], "url_path_contains": []},
+
         {"category": "Directory", "name": "PHP Link Directory", "generator": [], "html_contains": ["powered by php link directory", "phpld"], "url_path_contains": ["/listing/", "add-url.php"]},
         {"category": "Directory", "name": "Generic Directory", "generator": [], "html_contains": ["submit your link", "link directory", "business directory"], "url_path_contains": ["/directory/", "submit-link"]},
 
         {"category": "Article", "name": "Article Dashboard", "generator": [], "html_contains": ["powered by article dashboard"], "url_path_contains": []},
         {"category": "Article", "name": "ArticleFriendly", "generator": [], "html_contains": ["powered by articlefriendly"], "url_path_contains": []},
-        {"category": "Article", "name": "Generic Article Script", "generator": [], "html_contains": ["submit article", "article directory", "author bio"], "url_path_contains": ["/article/", "/articles/"]},
 
-        {"category": "Microblog", "name": "Tumblr", "generator": ["tumblr"], "html_contains": ["tumblr.com"], "url_path_contains": []},
-        {"category": "Microblog", "name": "Mastodon", "generator": ["mastodon"], "html_contains": ["mastodon"], "url_path_contains": ["/api/v1/instance"]},
-        {"category": "Microblog", "name": "GNU Social", "generator": ["statusnet", "gnu social"], "html_contains": ["powered by gnu social"], "url_path_contains": []},
+        {"category": "Blog Comment", "name": "Blogger", "generator": ["blogger"], "html_contains": ["blogspot.com", ".blogger.com"], "url_path_contains": []},
+        {"category": "Blog Comment", "name": "Movable Type", "generator": ["movable type"], "html_contains": ["powered by movable type"], "url_path_contains": ["mt-comments.cgi"]},
+        {"category": "Blog Comment", "name": "LiveJournal", "generator": [], "html_contains": ["livejournal.com", "lj-cut"], "url_path_contains": []},
 
-        {"category": "Social Network", "name": "Elgg", "generator": ["elgg"], "html_contains": ["powered by elgg"], "url_path_contains": []},
-        {"category": "Social Network", "name": "BuddyPress", "generator": ["buddypress"], "html_contains": ["buddypress"], "url_path_contains": ["/members/"]},
-        {"category": "Social Network", "name": "PHPFox", "generator": ["phpfox"], "html_contains": ["powered by phpfox"], "url_path_contains": []},
-        {"category": "Social Network", "name": "Dolphin", "generator": ["dolphin"], "html_contains": ["powered by dolphin"], "url_path_contains": []},
-        {"category": "Social Network", "name": "Oxwall", "generator": ["oxwall"], "html_contains": ["powered by oxwall"], "url_path_contains": []}
+        {"category": "CMS", "name": "Joomla", "generator": ["joomla"], "html_contains": ["/media/jui/", "/media/system/js/", "option=com_content", "joomla-script-options"], "url_path_contains": ["option=com_"]},
+        {"category": "CMS", "name": "Drupal", "generator": ["drupal"], "html_contains": ["drupal-settings-json", "sites/default/files", "/sites/all/", "data-drupal"], "url_path_contains": []},
+        {"category": "CMS", "name": "TYPO3", "generator": ["typo3"], "html_contains": ["typo3temp", "typo3conf", "t3-"], "url_path_contains": []},
+        {"category": "CMS", "name": "1C-Bitrix", "generator": ["1c-bitrix", "bitrix site manager"], "html_contains": ["/bitrix/js", "/bitrix/templates", "/bitrix/cache", "bx-core"], "url_path_contains": []},
+        {"category": "CMS", "name": "DataLife Engine", "generator": ["datalife engine"], "html_contains": ["dle_root", "engine/classes", "datalife engine"], "url_path_contains": []},
+        {"category": "CMS", "name": "uCoz", "generator": ["ucoz"], "html_contains": ["ucoz.net", "ucoz.ru", ".ucoz."], "url_path_contains": []},
+        {"category": "CMS", "name": "Ghost", "generator": ["ghost"], "html_contains": ["ghost-url", "/assets/built/"], "url_path_contains": []},
+        {"category": "CMS", "name": "MODX", "generator": ["modx"], "html_contains": ["modx", "assets/components/"], "url_path_contains": []},
+        {"category": "CMS", "name": "Concrete CMS", "generator": ["concrete5", "concrete cms"], "html_contains": ["/concrete/js/", "ccm-page"], "url_path_contains": []},
+        {"category": "CMS", "name": "DNN", "generator": ["dotnetnuke"], "html_contains": ["/desktopmodules/", "dnn_"], "url_path_contains": []},
+        {"category": "CMS", "name": "Sitecore", "generator": [], "html_contains": ["/sitecore/", "sc_site", "-/media/"], "url_path_contains": []},
+        {"category": "CMS", "name": "ExpressionEngine", "generator": ["expressionengine"], "html_contains": ["expressionengine"], "url_path_contains": []},
+        {"category": "CMS", "name": "WordPress", "generator": ["wordpress"], "html_contains": ["wp-content", "wp-includes", "wp-json"], "url_path_contains": ["wp-comments-post.php", "/wp-content/"]}
     ]
 }

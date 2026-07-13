@@ -12,3 +12,5 @@ proxies.txt
 
 # Run logs
 *.log
+gateway.txt
+proxies_public.txt

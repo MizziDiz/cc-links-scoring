@@ -26,8 +26,8 @@ def get_generator(soup) -> str:
 def classify_engine(html: str, url: str, soup=None):
     """Return (category, engine_name, matched_signal) or (None, None, None)."""
     if soup is None:
-        from bs4 import BeautifulSoup
-        soup = BeautifulSoup(html, "html.parser")
+        from cc_links.fetch import make_soup
+        soup = make_soup(html)
 
     generator = get_generator(soup)
     html_lower = html.lower()

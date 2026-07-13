@@ -33,7 +33,7 @@ from bs4 import BeautifulSoup
 
 from cc_links.cdx import get_cdx_records
 from cc_links import fetch as fetch_mod
-from cc_links.fetch import fetch_warc_record, parse_html_record, extract_links_from_html, domain_of
+from cc_links.fetch import fetch_warc_record, parse_html_record, extract_links_from_html, domain_of, make_soup
 from cc_links.db import init_db, insert_page, insert_links
 from cc_links.engines import classify_engine
 from cc_links.exclusions import load_excluded_domains, is_excluded
@@ -54,7 +54,7 @@ def process_page(conn, crawl, url, filename, offset, length, excluded, tld=None,
     if html is None:
         return 0
 
-    soup = BeautifulSoup(html, "html.parser")
+    soup = make_soup(html)
     category, engine_name, _signal = classify_engine(html, url, soup=soup)
     links = extract_links_from_html(html, url, soup=soup)
     links = [(t, a) for t, a in links if not is_excluded(domain_of(t), excluded)]
@@ -114,7 +114,7 @@ def _fetch_and_classify(record, excluded):
         if html is None:
             return {"url": url, "ok": False, "error": "no-html-record"}
 
-        soup = BeautifulSoup(html, "html.parser")
+        soup = make_soup(html)
         category, engine_name, _signal = classify_engine(html, url, soup=soup)
         links = extract_links_from_html(html, url, soup=soup)
         links = [(t, a) for t, a in links if not is_excluded(domain_of(t), excluded)]
@@ -146,6 +146,7 @@ def run_countries(countries, crawl, total_limit, per_country_limit, priorities_f
         n = fetch_mod.load_proxy_file(proxy_file)
         discovery_proxies = load_proxies(proxy_file)  # rotate index reads across IPs too
         print(f"[proxy] rotating across {n} proxies from {proxy_file}")
+        fetch_mod.start_proxy_refresher(proxy_file)  # hot-reload as an external harvester tops it up
     elif proxy:
         fetch_mod.set_proxy(proxy)
         print(f"[proxy] routing fetches through {proxy.split('@')[-1] if '@' in proxy else proxy}")
