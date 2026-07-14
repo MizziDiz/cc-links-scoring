@@ -1,0 +1,37 @@
+{
+  "comment": "One place to configure a run. Use it with: python pipeline.py countries --config run.config.json. Any value here can be overridden by passing the same flag on the command line. WHAT to collect lives in two companion files: categories.json (the countries/ccTLDs to search) and cc_links/exclusions.json (domains to skip). This file controls HOW the run behaves. Run `python pipeline.py countries --help` for every available key.",
+
+  "crawl": "CC-MAIN-2026-25",
+  "db": "latam.db",
+
+  "categories_file": "categories.json",
+  "per_category_limit": 100000,
+  "max_per_domain": 300,
+
+  "source": "s3",
+  "workers": 64,
+  "rate_limit": 15,
+  "discover_delay": 2,
+  "no_links": true,
+
+  "max_parts": null,
+  "commit_every": 200,
+  "exclude_file": null,
+  "proxy": null,
+  "proxy_file": null,
+
+  "_how_to_edit": {
+    "crawl": "Which Common Crawl snapshot to use, e.g. CC-MAIN-2026-25.",
+    "db": "Output SQLite file.",
+    "categories_file": "JSON mapping category name -> list of ccTLDs (edit categories.json to add/remove countries or whole regions).",
+    "per_category_limit": "Max pages to collect per category (e.g. 100000).",
+    "max_per_domain": "Cap pages taken from any single site so one big site doesn't dominate a country.",
+    "source": "Where to fetch WARC records: 's3' (inside AWS/EC2, no throttle), 'cloudfront' (works anywhere, throttled), or use proxy below.",
+    "workers": "Concurrent fetch threads. On 1 vCPU ~64 is plenty; scale with cores.",
+    "rate_limit": "Max requests/sec to CloudFront (ignored for source=s3). ~35 safe direct, higher through proxies.",
+    "discover_delay": "Seconds between index parts during discovery (paces direct parquet reads; 1-2s for large scans).",
+    "no_links": "true = store only outlink counts (small DB); false = store the full link graph.",
+    "proxy": "Single proxy / rotating-gateway URL, e.g. http://user:pass@host:port (leave null if unused).",
+    "proxy_file": "File with one proxy per line (host:port:user:pass) for a rotating pool (leave null if unused)."
+  }
+}

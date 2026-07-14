@@ -23,6 +23,7 @@ excluded from both crawling and outbound-link storage -- see
 cc_links/exclusions.json.
 """
 import argparse
+import json
 import sys
 import time
 import zlib
@@ -119,9 +120,10 @@ def _fetch_and_classify(record, excluded, extract_links=True):
         if html is None:
             return {"url": url, "ok": False, "error": "no-html-record"}
 
-        soup = make_soup(html)
-        category, engine_name, _signal = classify_engine(html, url, soup=soup)
+        category, engine_name, _signal = classify_engine(html, url)
         if extract_links:
+            # Only build the DOM when we actually need the <a href> graph.
+            soup = make_soup(html)
             links = extract_links_from_html(html, url, soup=soup)
             links = [(t, a) for t, a in links if not is_excluded(domain_of(t), excluded)]
         else:
@@ -360,6 +362,8 @@ def main():
     p_countries.add_argument("--discovery-only", action="store_true",
                               help="Run only the index scan (write + summarize candidates), then stop "
                                    "before fetching. Resume the fetch later with --skip-discovery.")
+    p_countries.add_argument("--config", help="JSON config file supplying defaults for any option "
+                                              "below (e.g. run.config.json). Explicit CLI flags override it.")
     p_countries.add_argument("--shard", help="Run one of N parallel workers over a disjoint URL "
                                              "slice, e.g. --shard 0/4 (each shard needs its own --db). "
                                              "Merge the shard DBs afterwards with merge_shards.py.")
@@ -374,6 +378,19 @@ def main():
                                    "pages, vs a few hundred MB for pages alone")
 
     args = parser.parse_args()
+
+    # A single editable config file can supply any option; explicit CLI flags win.
+    if getattr(args, "config", None):
+        with open(args.config, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        on_cli = {a.lstrip("-").split("=")[0].replace("-", "_")
+                  for a in sys.argv[1:] if a.startswith("--")}
+        for key, val in cfg.items():
+            if key.startswith(("comment", "_")):
+                continue
+            if key in on_cli or not hasattr(args, key):
+                continue
+            setattr(args, key, val)
 
     if args.mode == "domains":
         run_domains(args.domains, args.crawl, args.limit, args.db, args.delay, args.exclude_file)
