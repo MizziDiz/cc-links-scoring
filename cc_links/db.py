@@ -152,6 +152,37 @@ def enforce_candidate_floor(conn, minimum_score):
     return count
 
 
+def enforce_domain_cap(conn, maximum_per_domain):
+    """Keep the highest-scoring N candidates per registered domain."""
+    if not maximum_per_domain:
+        return 0
+    ranked = """
+        SELECT normalized_url FROM (
+            SELECT normalized_url,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY COALESCE(NULLIF(registered_domain, ''),
+                                             NULLIF(domain, ''), normalized_url)
+                       ORDER BY score DESC, normalized_url
+                   ) AS rn
+            FROM candidates
+        ) WHERE rn > ?
+    """
+    urls = [row[0] for row in conn.execute(ranked, (maximum_per_domain,))]
+    if not urls:
+        return 0
+    conn.executemany(
+        """INSERT OR REPLACE INTO processed_urls
+           (normalized_url, url, crawl, outcome, score, processed_at)
+           SELECT normalized_url, url, crawl, 'domain_cap', score, CURRENT_TIMESTAMP
+           FROM candidates WHERE normalized_url = ?""",
+        [(url,) for url in urls],
+    )
+    conn.executemany("DELETE FROM candidates WHERE normalized_url = ?",
+                     [(url,) for url in urls])
+    conn.commit()
+    return len(urls)
+
+
 def _extract_domain(url: str) -> str:
     from urllib.parse import urlparse
     try:

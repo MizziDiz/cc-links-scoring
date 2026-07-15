@@ -12,7 +12,8 @@ from tqdm import tqdm
 from cc_links import fetch as fetch_mod
 from cc_links.cc_index import discover_by_countries, load_candidates_shuffled, load_proxies
 from cc_links.countries import country_name, load_category_map
-from cc_links.db import enforce_candidate_floor, init_db, mark_url_processed, upsert_candidate
+from cc_links.db import (enforce_candidate_floor, enforce_domain_cap, init_db,
+                         mark_url_processed, upsert_candidate)
 from cc_links.exclusions import is_excluded, load_excluded_domains
 from cc_links.fetch import domain_of, fetch_warc_record, parse_html_record
 from cc_links.prospects import (classify_prospect, discovery_url_terms,
@@ -67,6 +68,10 @@ def run(args):
     archived = enforce_candidate_floor(conn, args.min_score)
     if archived:
         print(f"[score-floor] archived {archived} historical candidates below {args.min_score}")
+    capped = enforce_domain_cap(conn, args.max_per_domain)
+    if capped:
+        print(f"[domain-cap] archived {capped} historical candidates above "
+              f"{args.max_per_domain} per domain")
     existing = {r[0] for r in conn.execute("SELECT normalized_url FROM candidates")}
     existing.update(r[0] for r in conn.execute("SELECT normalized_url FROM processed_urls"))
     print(f"[resume] {len(existing)} URLs already processed; they will not be fetched again")

@@ -4,7 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from cc_links.db import enforce_candidate_floor, init_db, mark_url_processed, upsert_candidate
+from cc_links.db import (enforce_candidate_floor, enforce_domain_cap, init_db,
+                         mark_url_processed, upsert_candidate)
 from cc_links.prospects import classify_prospect, discovery_url_terms, normalize_url
 
 
@@ -100,6 +101,24 @@ class ProspectDatabaseTests(unittest.TestCase):
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM candidates").fetchone()[0], 0)
             self.assertEqual(conn.execute(
                 "SELECT outcome FROM processed_urls").fetchone()[0], "below_threshold")
+            conn.close()
+
+    def test_domain_cap_keeps_highest_scores(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = init_db(str(Path(tmp) / "test.db"))
+            for i, score in enumerate((50, 90, 70)):
+                upsert_candidate(
+                    conn, normalized_url=f"https://example.com/{i}",
+                    url=f"https://example.com/{i}", domain="example.com",
+                    registered_domain="example.com", crawl="CC-TEST", tld="com",
+                    country="", bucket="test", family="forum", platform="phpBB",
+                    score=score, matched_signals="[]", warc_filename="x",
+                    warc_offset=i, warc_length=2)
+            self.assertEqual(enforce_domain_cap(conn, 2), 1)
+            self.assertEqual([r[0] for r in conn.execute(
+                "SELECT score FROM candidates ORDER BY score DESC")], [90, 70])
+            self.assertEqual(conn.execute(
+                "SELECT outcome FROM processed_urls").fetchone()[0], "domain_cap")
             conn.close()
 
 
