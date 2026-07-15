@@ -56,6 +56,17 @@ CREATE TABLE IF NOT EXISTS candidates (
 CREATE INDEX IF NOT EXISTS idx_candidates_family ON candidates(family);
 CREATE INDEX IF NOT EXISTS idx_candidates_country ON candidates(country);
 CREATE INDEX IF NOT EXISTS idx_candidates_score ON candidates(score);
+
+CREATE TABLE IF NOT EXISTS processed_urls (
+    normalized_url TEXT PRIMARY KEY,
+    url TEXT NOT NULL,
+    crawl TEXT,
+    outcome TEXT NOT NULL,
+    score INTEGER,
+    processed_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_processed_urls_outcome ON processed_urls(outcome);
 """
 
 
@@ -104,6 +115,21 @@ def upsert_candidate(conn, *, normalized_url, url, domain, registered_domain, cr
                                   THEN excluded.matched_signals ELSE candidates.matched_signals END""",
         (normalized_url, url, domain, registered_domain, crawl, tld, country, bucket,
          family, platform, score, matched_signals, warc_filename, warc_offset, warc_length),
+    )
+
+
+def mark_url_processed(conn, normalized_url, url, crawl, outcome, score=None):
+    """Record a definitive fetch result so later runs never download it again.
+
+    Transient fetch errors are intentionally not recorded by the caller.
+    """
+    conn.execute(
+        """INSERT INTO processed_urls (normalized_url, url, crawl, outcome, score)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(normalized_url) DO UPDATE SET
+             crawl=excluded.crawl, outcome=excluded.outcome, score=excluded.score,
+             processed_at=CURRENT_TIMESTAMP""",
+        (normalized_url, url, crawl, outcome, score),
     )
 
 

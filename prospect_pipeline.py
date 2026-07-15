@@ -12,7 +12,7 @@ from tqdm import tqdm
 from cc_links import fetch as fetch_mod
 from cc_links.cc_index import discover_by_countries, load_candidates_shuffled, load_proxies
 from cc_links.countries import country_name, load_category_map
-from cc_links.db import init_db, upsert_candidate
+from cc_links.db import init_db, mark_url_processed, upsert_candidate
 from cc_links.exclusions import is_excluded, load_excluded_domains
 from cc_links.fetch import domain_of, fetch_warc_record, parse_html_record
 from cc_links.prospects import (classify_prospect, discovery_url_terms,
@@ -65,6 +65,8 @@ def run(args):
 
     conn = init_db(args.db)
     existing = {r[0] for r in conn.execute("SELECT normalized_url FROM candidates")}
+    existing.update(r[0] for r in conn.execute("SELECT normalized_url FROM processed_urls"))
+    print(f"[resume] {len(existing)} URLs already processed; they will not be fetched again")
 
     scheduled = set(existing)
 
@@ -109,15 +111,17 @@ def run(args):
                         stats["fetch_error"] += 1
                         continue
                     rec = result["record"]
+                    normalized = normalize_url(rec["url"])
                     if not result["matches"]:
                         stats["unmatched"] += 1
+                        mark_url_processed(conn, normalized, rec["url"], args.crawl, "unmatched")
                         continue
                     # One URL may legitimately match multiple families. Store the
                     # best match in candidates; preserve every signal in JSON.
                     best = result["matches"][0]
                     all_matches = [m.to_dict() for m in result["matches"]]
                     upsert_candidate(
-                        conn, normalized_url=normalize_url(rec["url"]), url=rec["url"],
+                        conn, normalized_url=normalized, url=rec["url"],
                         domain=domain_of(rec["url"]),
                         registered_domain=rec.get("url_host_registered_domain"),
                         crawl=args.crawl, tld=rec.get("url_host_tld"),
@@ -129,6 +133,8 @@ def run(args):
                     )
                     stats[f"family:{best.family}"] += 1
                     stats["stored"] += 1
+                    mark_url_processed(conn, normalized, rec["url"], args.crawl,
+                                       "stored", best.score)
                     if processed % args.commit_every == 0:
                         conn.commit()
                     now = time.monotonic()
@@ -157,7 +163,7 @@ def main():
     parser.add_argument("--workers", type=int, default=20)
     parser.add_argument("--rate-limit", type=float, default=15)
     parser.add_argument("--max-parts", type=int)
-    parser.add_argument("--max-per-domain", type=int, default=100)
+    parser.add_argument("--max-per-domain", type=int, default=10)
     parser.add_argument("--discover-delay", type=float, default=0.0)
     parser.add_argument("--source", choices=["cloudfront", "s3"], default="cloudfront")
     parser.add_argument("--proxy")

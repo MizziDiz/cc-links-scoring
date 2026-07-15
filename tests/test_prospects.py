@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from cc_links.db import init_db, upsert_candidate
+from cc_links.db import init_db, mark_url_processed, upsert_candidate
 from cc_links.prospects import classify_prospect, discovery_url_terms, normalize_url
 
 
@@ -22,6 +22,18 @@ class ProspectClassifierTests(unittest.TestCase):
         matches = classify_prospect("<footer>Powered by phpBB</footer>",
                                     "https://forum.example.net/index.php")
         self.assertEqual(matches[0].rule_id, "phpbb_forum")
+
+    def test_cli_minimum_score_is_hard_floor(self):
+        matches = classify_prospect("<footer>Powered by phpBB</footer>",
+                                    "https://forum.example.net/index.php",
+                                    minimum_score=60)
+        self.assertEqual(matches, [])
+
+    def test_selective_url_signal_survives_default_threshold(self):
+        matches = classify_prospect("<html></html>",
+                                    "https://forum.example.net/viewtopic.php?t=7")
+        self.assertEqual(matches[0].rule_id, "phpbb_forum")
+        self.assertGreaterEqual(matches[0].score, 50)
 
     def test_broad_phrase_alone_is_rejected(self):
         self.assertEqual(classify_prospect("Please leave a comment", "https://example.org/post"), [])
@@ -65,6 +77,15 @@ class ProspectDatabaseTests(unittest.TestCase):
             upsert_candidate(conn, **common, family="forum", score=90,
                              matched_signals="[]")
             self.assertEqual(conn.execute("SELECT family FROM candidates").fetchone()[0], "forum")
+            conn.close()
+
+    def test_processed_urls_are_persisted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = init_db(str(Path(tmp) / "test.db"))
+            mark_url_processed(conn, "https://example.com/x", "https://example.com/x",
+                               "CC-TEST", "unmatched")
+            self.assertEqual(
+                conn.execute("SELECT outcome FROM processed_urls").fetchone()[0], "unmatched")
             conn.close()
 
 

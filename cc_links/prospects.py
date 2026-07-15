@@ -9,7 +9,11 @@ from cc_links.engines import get_generator
 
 DEFAULT_FOOTPRINTS = os.path.join(os.path.dirname(__file__), "prospect_footprints.json")
 TRACKING_PARAMS = {"fbclid", "gclid", "yclid", "mc_cid", "mc_eid"}
-WEIGHTS = {"url": 35, "generator": 30, "html": 30}
+WEIGHTS = {"url": 55, "generator": 55, "html": 25}
+STRONG_HTML_MARKERS = (
+    "powered by", "wp-comments-post.php", "comment_post_id", "mw-content-text",
+    "simple machines forum", "coppermine photo gallery", "trackback url",
+)
 
 
 @dataclass
@@ -89,9 +93,15 @@ def classify_prospect(html: str, url: str, footprints_path: Optional[str] = None
             if term.lower() in html_lower:
                 found.append(f"html:{term}")
                 types.add("html")
-        score = min(100, sum(WEIGHTS[t] for t in types) + max(0, len(found) - len(types)) * 5)
+        type_scores = {t: WEIGHTS[t] for t in types}
+        if "html" in types and any(
+                marker in html_lower for marker in STRONG_HTML_MARKERS):
+            type_scores["html"] = 50
+        score = min(100, sum(type_scores.values()) + max(0, len(found) - len(types)) * 5)
         required_types = rule.get("minimum_signal_types", min_types)
-        if score >= rule.get("minimum_score", threshold) and len(types) >= required_types:
+        # The CLI threshold is a hard floor. A rule may demand more, never less.
+        rule_threshold = max(threshold, rule.get("minimum_score", 0))
+        if score >= rule_threshold and len(types) >= required_types:
             matches.append(ProspectMatch(rule["id"], rule["family"], rule.get("platform"),
                                          score, len(types), found))
     return sorted(matches, key=lambda m: (-m.score, -m.signal_types, m.rule_id))
