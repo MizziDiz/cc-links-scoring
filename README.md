@@ -1,5 +1,57 @@
 # cc-links — сбор и анализ ссылок из Common Crawl без Athena
 
+## База URL-площадок (prospects)
+
+`prospect_pipeline.py` собирает из Common Crawl не произвольный граф исходящих
+ссылок, а классифицированную базу URL-кандидатов. Поиск выполняется в два этапа:
+
+1. DuckDB отбирает из Parquet-индекса страницы по селективным URL-footprints.
+2. HTML извлекается из WARC и подтверждается по URL, `meta generator` и HTML-сигналам.
+
+Таксономия и веса находятся в `cc_links/prospect_footprints.json`. Запись в
+`candidates` содержит семейство площадки, платформу, score и JSON со всеми
+совпавшими доказательствами. Исходящие ссылки для этого режима не извлекаются.
+
+Небольшой тестовый discovery-запуск:
+
+```
+python prospect_pipeline.py --categories-file categories.json \
+    --per-category-limit 100 --max-parts 2 --discovery-only
+```
+
+Полный запуск с CloudFront:
+
+```
+python prospect_pipeline.py --categories-file categories.json \
+    --per-category-limit 10000 --db prospects.db --workers 20 \
+    --rate-limit 15 --source cloudfront
+```
+
+На EC2 с доступом к `s3://commoncrawl` используйте `--source s3`. Для продолжения
+после discovery передайте `--skip-discovery`; checkpoint по умолчанию хранится в
+`<db>.prospects.jsonl` и `<db>.prospects.jsonl.state.json`.
+
+Экспорт и отчёты:
+
+```
+python export_candidates.py --db prospects.db --family forum \
+    --min-score 70 --format csv --out forum.csv
+python analyze_candidates.py --db prospects.db --report families
+```
+
+### Amazon Linux + S3, фоновый запуск
+
+EC2 instance role должен разрешать `s3:GetObject` для bucket `commoncrawl`.
+Готовый unit `deploy/cc-prospects.service` запускает сборщик через systemd,
+возобновляет его после ошибки и пишет обычную строку прогресса раз в минуту.
+
+```
+curl -fsSLO https://github.com/MizziDiz/cc-links-scoring/releases/download/prospects-v0.1.0/install-amazon-linux.sh
+chmod +x install-amazon-linux.sh
+./install-amazon-linux.sh
+sudo journalctl -fu cc-prospects.service
+```
+
 ## Установка
 
 ```

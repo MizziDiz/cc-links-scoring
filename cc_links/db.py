@@ -30,6 +30,32 @@ CREATE INDEX IF NOT EXISTS idx_links_target_domain ON links(target_domain);
 CREATE INDEX IF NOT EXISTS idx_pages_engine ON pages(engine_category);
 CREATE INDEX IF NOT EXISTS idx_pages_country ON pages(country);
 CREATE INDEX IF NOT EXISTS idx_pages_bucket ON pages(bucket);
+
+CREATE TABLE IF NOT EXISTS candidates (
+    normalized_url TEXT PRIMARY KEY,
+    url TEXT NOT NULL,
+    domain TEXT,
+    registered_domain TEXT,
+    crawl TEXT,
+    tld TEXT,
+    country TEXT,
+    bucket TEXT,
+    family TEXT NOT NULL,
+    platform TEXT,
+    score INTEGER NOT NULL,
+    matched_signals TEXT NOT NULL,
+    warc_filename TEXT,
+    warc_offset INTEGER,
+    warc_length INTEGER,
+    source TEXT DEFAULT 'common_crawl',
+    status TEXT DEFAULT 'archived_match',
+    first_seen TEXT DEFAULT CURRENT_TIMESTAMP,
+    last_seen TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_candidates_family ON candidates(family);
+CREATE INDEX IF NOT EXISTS idx_candidates_country ON candidates(country);
+CREATE INDEX IF NOT EXISTS idx_candidates_score ON candidates(score);
 """
 
 
@@ -56,6 +82,28 @@ def insert_links(conn, source_url: str, links):
     conn.executemany(
         "INSERT INTO links (source_url, target_url, target_domain, anchor_text) VALUES (?, ?, ?, ?)",
         [(source_url, target, _extract_domain(target), anchor) for target, anchor in links],
+    )
+
+
+def upsert_candidate(conn, *, normalized_url, url, domain, registered_domain, crawl,
+                     tld, country, bucket, family, platform, score, matched_signals,
+                     warc_filename, warc_offset, warc_length):
+    conn.execute(
+        """INSERT INTO candidates
+           (normalized_url, url, domain, registered_domain, crawl, tld, country, bucket,
+            family, platform, score, matched_signals, warc_filename, warc_offset, warc_length)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(normalized_url) DO UPDATE SET
+             last_seen=CURRENT_TIMESTAMP,
+             score=MAX(candidates.score, excluded.score),
+             family=CASE WHEN excluded.score >= candidates.score
+                         THEN excluded.family ELSE candidates.family END,
+             platform=CASE WHEN excluded.score >= candidates.score
+                           THEN excluded.platform ELSE candidates.platform END,
+             matched_signals=CASE WHEN excluded.score >= candidates.score
+                                  THEN excluded.matched_signals ELSE candidates.matched_signals END""",
+        (normalized_url, url, domain, registered_domain, crawl, tld, country, bucket,
+         family, platform, score, matched_signals, warc_filename, warc_offset, warc_length),
     )
 
 

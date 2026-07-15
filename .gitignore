@@ -6,6 +6,8 @@ __pycache__/
 *.db-journal
 *.candidates.jsonl
 *.candidates.jsonl.state.json
+*_urls_scored.csv.gz
+latam_urls_*.txt
 
 # Real proxy credentials -- never commit
 proxies.txt

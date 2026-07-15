@@ -1,0 +1,166 @@
+{
+  "version": 1,
+  "comment": "Common Crawl prospect taxonomy derived from the local A-Parser footprint families. Broad search phrases require corroboration; URL, generator and structural HTML signals carry more weight.",
+  "defaults": {
+    "minimum_score": 50,
+    "minimum_signal_types": 2
+  },
+  "rules": [
+    {
+      "id": "wordpress_comment",
+      "family": "blog_comment",
+      "platform": "WordPress",
+      "signals": {
+        "generator_contains": ["wordpress"],
+        "url_contains": ["wp-comments-post.php", "/comments/feed/"],
+        "html_contains": ["wp-comments-post.php", "comment_post_id", "comment-form", "your email address will not be published", "notify me of follow-up comments"]
+      }
+    },
+    {
+      "id": "generic_blog_comment",
+      "family": "blog_comment",
+      "platform": null,
+      "signals": {
+        "url_contains": ["/comment/", "#respond"],
+        "html_contains": ["leave a comment", "post a comment", "comments rss", "name=\"comment\"", "name='comment'", "comment-form"]
+      }
+    },
+    {
+      "id": "phpbb_forum",
+      "family": "forum",
+      "platform": "phpBB",
+      "minimum_score": 30,
+      "minimum_signal_types": 1,
+      "signals": {
+        "generator_contains": ["phpbb"],
+        "url_contains": ["viewtopic.php", "viewforum.php", "memberlist.php"],
+        "html_contains": ["powered by phpbb", "phpbb"]
+      }
+    },
+    {
+      "id": "vbulletin_forum",
+      "family": "forum",
+      "platform": "vBulletin",
+      "minimum_score": 30,
+      "minimum_signal_types": 1,
+      "signals": {
+        "generator_contains": ["vbulletin"],
+        "url_contains": ["showthread.php", "forumdisplay.php", "memberlist.php"],
+        "html_contains": ["powered by vbulletin", "vbulletin"]
+      }
+    },
+    {
+      "id": "smf_forum",
+      "family": "forum",
+      "platform": "SMF",
+      "minimum_score": 30,
+      "minimum_signal_types": 1,
+      "signals": {
+        "generator_contains": ["simple machines"],
+        "url_contains": ["index.php?action=register", "index.php?topic=", "index.php?board="],
+        "html_contains": ["powered by smf", "simple machines forum"]
+      }
+    },
+    {
+      "id": "mybb_forum",
+      "family": "forum",
+      "platform": "MyBB",
+      "minimum_score": 30,
+      "minimum_signal_types": 1,
+      "signals": {
+        "generator_contains": ["mybb"],
+        "url_contains": ["showthread.php?tid=", "member.php?action=register"],
+        "html_contains": ["powered by mybb", "mybb"]
+      }
+    },
+    {
+      "id": "generic_forum",
+      "family": "forum",
+      "platform": null,
+      "signals": {
+        "url_contains": ["/forum/", "/forums/", "/threads/", "memberlist.php"],
+        "html_contains": ["forum", "register", "member list", "new topic"]
+      }
+    },
+    {
+      "id": "guestbook",
+      "family": "guestbook",
+      "platform": null,
+      "signals": {
+        "url_contains": ["guestbook", "gbook.php", "signbook.php", "addentry.php"],
+        "html_contains": ["sign my guestbook", "add to guestbook", "view guestbook", "guestbook entries", "powered by php guestbook"]
+      }
+    },
+    {
+      "id": "article_submission",
+      "family": "article_submit",
+      "platform": null,
+      "signals": {
+        "url_contains": ["submit-article", "submit_article", "add-article", "add_article"],
+        "html_contains": ["powered by article dashboard", "submit article", "add article", "article directory", "powered by seo-board"]
+      }
+    },
+    {
+      "id": "mediawiki",
+      "family": "wiki",
+      "platform": "MediaWiki",
+      "minimum_score": 30,
+      "minimum_signal_types": 1,
+      "signals": {
+        "generator_contains": ["mediawiki"],
+        "url_contains": ["special:createaccount", "special:userlogin", "index.php?title=special:"],
+        "html_contains": ["powered by mediawiki", "this page was last edited", "mw-content-text"]
+      }
+    },
+    {
+      "id": "pligg_bookmark",
+      "family": "social_bookmark",
+      "platform": "Pligg",
+      "minimum_score": 30,
+      "minimum_signal_types": 1,
+      "signals": {
+        "generator_contains": ["pligg"],
+        "url_contains": ["submit.php", "/upcoming/"],
+        "html_contains": ["powered by pligg", "submit a new story", "upcoming news", "published news"]
+      }
+    },
+    {
+      "id": "php_link_directory",
+      "family": "directory",
+      "platform": "PHP Link Directory",
+      "signals": {
+        "url_contains": ["add-url.php", "submit-link", "submit.php"],
+        "html_contains": ["powered by phpld", "powered by php link directory", "submit your site", "add your site", "add a link"]
+      }
+    },
+    {
+      "id": "generic_directory",
+      "family": "directory",
+      "platform": null,
+      "signals": {
+        "url_contains": ["/directory/", "/submit-site", "/add-listing"],
+        "html_contains": ["link directory", "business directory", "submit your link", "submit your site"]
+      }
+    },
+    {
+      "id": "coppermine_comment",
+      "family": "image_comment",
+      "platform": "Coppermine",
+      "minimum_score": 30,
+      "minimum_signal_types": 1,
+      "signals": {
+        "url_contains": ["displayimage.php", "addcomment"],
+        "html_contains": ["powered by coppermine photo gallery", "coppermine photo gallery"]
+      }
+    },
+    {
+      "id": "trackback",
+      "family": "trackback",
+      "platform": null,
+      "signals": {
+        "url_contains": ["/trackback/", "wp-trackback.php", "mt-tb.cgi"],
+        "html_contains": ["trackback url for this entry", "trackback url", "send trackback", "trackback ping"]
+      }
+    }
+  ]
+}

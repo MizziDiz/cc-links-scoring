@@ -100,7 +100,7 @@ def discover_by_countries(crawl: str, category_budgets: dict, tld_to_category: d
                            max_parts=None, per_tld_cap: int = 250_000,
                            max_per_domain: int = None, progress=None, resume: bool = True,
                            max_retries: int = 6, retry_backoff: float = 8.0, proxies=None,
-                           part_delay: float = 0.0):
+                           part_delay: float = 0.0, url_terms=None):
     """Scan Parquet index parts, streaming matches to out_path (JSONL) as they're found.
 
     category_budgets: {"Colombia": 100000, "Other Africa": 100000, ...} -- max pages
@@ -188,6 +188,11 @@ def discover_by_countries(crawl: str, category_budgets: dict, tld_to_category: d
             # remaining need among active ccTLDs (bounded by a sane ceiling so one
             # freak part can't blow up memory).
             effective_cap = min(max(remaining[c] for c in active_cats), per_tld_cap)
+            url_filter = ""
+            if url_terms:
+                escaped_terms = [str(t).lower().replace("'", "''") for t in url_terms]
+                clauses = [f"INSTR(LOWER(url), '{t}') > 0" for t in escaped_terms]
+                url_filter = "AND (" + " OR ".join(clauses) + ")"
             query = f"""
                 SELECT url, url_host_tld, url_host_registered_domain,
                        warc_filename, warc_record_offset, warc_record_length
@@ -197,6 +202,7 @@ def discover_by_countries(crawl: str, category_budgets: dict, tld_to_category: d
                     WHERE fetch_status = 200
                       AND content_mime_detected = 'text/html'
                       AND url_host_tld IN ({tld_list_sql})
+                      {url_filter}
                 )
                 WHERE rn <= {effective_cap}
             """

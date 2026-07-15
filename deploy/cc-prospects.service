@@ -1,0 +1,18 @@
+[Unit]
+Description=Common Crawl prospect collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ec2-user
+WorkingDirectory=/opt/cc-links-scoring
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/cc-links-scoring/.venv/bin/python /opt/cc-links-scoring/prospect_pipeline.py --categories-file /opt/cc-links-scoring/categories.json --per-category-limit 100000 --db /var/lib/cc-prospects/prospects.db --candidates-file /var/lib/cc-prospects/prospects.jsonl --workers 64 --source s3 --progress-interval 60
+Restart=on-failure
+RestartSec=30
+TimeoutStopSec=300
+KillSignal=SIGINT
+
+[Install]
+WantedBy=multi-user.target
