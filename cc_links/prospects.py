@@ -2,6 +2,7 @@
 import json
 import os
 from dataclasses import dataclass, asdict
+from typing import List, Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from cc_links.engines import get_generator
@@ -15,22 +16,22 @@ WEIGHTS = {"url": 35, "generator": 30, "html": 30}
 class ProspectMatch:
     rule_id: str
     family: str
-    platform: str | None
+    platform: Optional[str]
     score: int
     signal_types: int
-    signals: list[str]
+    signals: List[str]
 
     def to_dict(self):
         return asdict(self)
 
 
-def load_prospect_rules(path: str | None = None):
+def load_prospect_rules(path: Optional[str] = None):
     with open(path or DEFAULT_FOOTPRINTS, "r", encoding="utf-8") as f:
         data = json.load(f)
     return data.get("defaults", {}), data["rules"]
 
 
-def discovery_url_terms(path: str | None = None) -> list[str]:
+def discovery_url_terms(path: Optional[str] = None) -> List[str]:
     """Specific URL terms safe enough to prefilter the Common Crawl index."""
     _, rules = load_prospect_rules(path)
     terms = []
@@ -62,8 +63,8 @@ def normalize_url(url: str) -> str:
     return urlunsplit((scheme, netloc, path, query, ""))
 
 
-def classify_prospect(html: str, url: str, footprints_path: str | None = None,
-                      minimum_score: int | None = None) -> list[ProspectMatch]:
+def classify_prospect(html: str, url: str, footprints_path: Optional[str] = None,
+                      minimum_score: Optional[int] = None) -> List[ProspectMatch]:
     defaults, rules = load_prospect_rules(footprints_path)
     threshold = minimum_score if minimum_score is not None else defaults.get("minimum_score", 50)
     min_types = defaults.get("minimum_signal_types", 2)

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-RELEASE_TAG="${RELEASE_TAG:-prospects-v0.1.0}"
+RELEASE_TAG="${RELEASE_TAG:-prospects-v0.1.1}"
 REPO_URL="${REPO_URL:-https://github.com/MizziDiz/cc-links-scoring.git}"
 APP_DIR="${APP_DIR:-/opt/cc-links-scoring}"
 DATA_DIR="${DATA_DIR:-/var/lib/cc-prospects}"
@@ -26,7 +26,8 @@ python3 -m venv "$APP_DIR/.venv"
 
 sudo install -m 0644 "$APP_DIR/deploy/cc-prospects.service" /etc/systemd/system/cc-prospects.service
 sudo systemctl daemon-reload
-sudo systemctl enable --now cc-prospects.service
+sudo systemctl enable cc-prospects.service
+sudo systemctl restart cc-prospects.service
 
 echo "Collector installed. Follow progress with:"
 echo "  sudo journalctl -fu cc-prospects.service"
