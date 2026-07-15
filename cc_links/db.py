@@ -133,6 +133,25 @@ def mark_url_processed(conn, normalized_url, url, crawl, outcome, score=None):
     )
 
 
+def enforce_candidate_floor(conn, minimum_score):
+    """Archive and remove historical candidates below the active score floor."""
+    count = conn.execute(
+        "SELECT COUNT(*) FROM candidates WHERE score < ?", (minimum_score,)
+    ).fetchone()[0]
+    if not count:
+        return 0
+    conn.execute(
+        """INSERT OR REPLACE INTO processed_urls
+           (normalized_url, url, crawl, outcome, score, processed_at)
+           SELECT normalized_url, url, crawl, 'below_threshold', score, CURRENT_TIMESTAMP
+           FROM candidates WHERE score < ?""",
+        (minimum_score,),
+    )
+    conn.execute("DELETE FROM candidates WHERE score < ?", (minimum_score,))
+    conn.commit()
+    return count
+
+
 def _extract_domain(url: str) -> str:
     from urllib.parse import urlparse
     try:

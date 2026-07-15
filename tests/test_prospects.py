@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from cc_links.db import init_db, mark_url_processed, upsert_candidate
+from cc_links.db import enforce_candidate_floor, init_db, mark_url_processed, upsert_candidate
 from cc_links.prospects import classify_prospect, discovery_url_terms, normalize_url
 
 
@@ -86,6 +86,20 @@ class ProspectDatabaseTests(unittest.TestCase):
                                "CC-TEST", "unmatched")
             self.assertEqual(
                 conn.execute("SELECT outcome FROM processed_urls").fetchone()[0], "unmatched")
+            conn.close()
+
+    def test_score_floor_archives_old_candidates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = init_db(str(Path(tmp) / "test.db"))
+            common = dict(normalized_url="https://example.com/x", url="https://example.com/x",
+                          domain="example.com", registered_domain="example.com", crawl="CC-TEST",
+                          tld="com", country="", bucket="test", family="social_bookmark",
+                          platform="Pligg", warc_filename="x", warc_offset=1, warc_length=2)
+            upsert_candidate(conn, **common, score=35, matched_signals="[]")
+            self.assertEqual(enforce_candidate_floor(conn, 50), 1)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM candidates").fetchone()[0], 0)
+            self.assertEqual(conn.execute(
+                "SELECT outcome FROM processed_urls").fetchone()[0], "below_threshold")
             conn.close()
 
 
