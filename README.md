@@ -46,7 +46,7 @@ EC2 instance role должен разрешать `s3:GetObject` для bucket `
 возобновляет его после ошибки и пишет обычную строку прогресса раз в минуту.
 
 ```
-curl -fsSLO https://github.com/MizziDiz/cc-links-scoring/releases/download/prospects-v0.2.0/install-amazon-linux.sh
+curl -fsSLO https://github.com/MizziDiz/cc-links-scoring/releases/download/prospects-v0.3.0/install-amazon-linux.sh
 chmod +x install-amazon-linux.sh
 ./install-amazon-linux.sh
 sudo journalctl -fu cc-prospects.service
@@ -59,8 +59,13 @@ JSONL/state в `--state-dir`; `processed_urls` предотвращает пов
 
 ```
 python multi_crawl.py --target-total 100000 --max-crawls 12 \
+    --discovery-shards 4 \
     --state-dir crawl_states --db prospects.db --source s3
 ```
+
+`--discovery-shards 4` делит Parquet-части snapshot между четырьмя
+непересекающимися процессами. После discovery их JSONL объединяются с
+нормализацией URL, затем запускается единый быстрый WARC/scoring этап.
 
 Стратифицированная выборка для ручной оценки качества:
 

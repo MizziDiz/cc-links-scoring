@@ -57,6 +57,8 @@ def run(args):
             max_parts=args.max_parts, max_per_domain=args.max_per_domain,
             progress=lambda m: print(f"[discover] {m}"), proxies=discovery_proxies,
             part_delay=args.discover_delay, url_terms=terms,
+            part_shard=(tuple(int(v) for v in args.part_shard.split("/"))
+                        if args.part_shard else None),
         )
     else:
         print(f"[discover] skipped; using {candidates_file}")
@@ -155,6 +157,10 @@ def run(args):
                         last_report = now
                 fill()
     conn.commit()
+    final_capped = enforce_domain_cap(conn, args.max_per_domain)
+    if final_capped:
+        print(f"[domain-cap] archived {final_capped} newly collected candidates above "
+              f"{args.max_per_domain} per domain")
     conn.close()
     print("[result] " + ", ".join(f"{k}={v}" for k, v in stats.most_common()))
 
@@ -179,6 +185,8 @@ def main():
     parser.add_argument("--exclude-file")
     parser.add_argument("--skip-discovery", action="store_true")
     parser.add_argument("--discovery-only", action="store_true")
+    parser.add_argument("--part-shard",
+                        help="Scan only shard i/N of index parts, e.g. 0/4")
     parser.add_argument("--commit-every", type=int, default=200)
     parser.add_argument("--progress-interval", type=float, default=60,
                         help="Emit one plain progress line every N seconds (systemd/journal friendly)")

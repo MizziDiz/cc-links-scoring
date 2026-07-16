@@ -1,11 +1,12 @@
 import argparse
+import json
 import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 
 from cc_links.db import init_db
-from multi_crawl import build_command, candidate_count
+from multi_crawl import build_command, candidate_count, merge_candidate_files
 
 
 class MultiCrawlTests(unittest.TestCase):
@@ -26,6 +27,19 @@ class MultiCrawlTests(unittest.TestCase):
         command = build_command(args, "CC-MAIN-2026-21", "/tmp/2026-21.jsonl")
         self.assertIn("CC-MAIN-2026-21", command)
         self.assertIn("/tmp/2026-21.jsonl", command)
+
+    def test_merge_deduplicates_normalized_urls(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first = Path(tmp) / "first.jsonl"
+            second = Path(tmp) / "second.jsonl"
+            output = Path(tmp) / "merged.jsonl"
+            first.write_text(json.dumps({"url": "https://Example.com/x?utm_source=a"}) + "\n",
+                             encoding="utf-8")
+            second.write_text(json.dumps({"url": "https://example.com/x"}) + "\n",
+                              encoding="utf-8")
+            self.assertEqual(merge_candidate_files(
+                [str(first), str(second)], str(output)), 1)
+            self.assertEqual(len(output.read_text(encoding="utf-8").splitlines()), 1)
 
 
 if __name__ == "__main__":

@@ -100,7 +100,7 @@ def discover_by_countries(crawl: str, category_budgets: dict, tld_to_category: d
                            max_parts=None, per_tld_cap: int = 250_000,
                            max_per_domain: int = None, progress=None, resume: bool = True,
                            max_retries: int = 6, retry_backoff: float = 8.0, proxies=None,
-                           part_delay: float = 0.0, url_terms=None):
+                           part_delay: float = 0.0, url_terms=None, part_shard=None):
     """Scan Parquet index parts, streaming matches to out_path (JSONL) as they're found.
 
     category_budgets: {"Colombia": 100000, "Other Africa": 100000, ...} -- max pages
@@ -138,6 +138,9 @@ def discover_by_countries(crawl: str, category_budgets: dict, tld_to_category: d
         allowed_idx = {int(i * stride) for i in range(max_parts)}
     else:
         allowed_idx = set(range(len(parts)))
+    if part_shard:
+        shard_index, shard_count = part_shard
+        allowed_idx = {i for i in allowed_idx if i % shard_count == shard_index}
 
     # When proxies are supplied, each new connection binds to the next proxy so
     # parquet reads rotate across exit IPs -- the fix for the CloudFront throttling

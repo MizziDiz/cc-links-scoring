@@ -2,11 +2,15 @@
 """Run prospect collection across recent Common Crawl snapshots until a target is met."""
 import argparse
 import json
+import math
 import os
 import sqlite3
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from urllib.request import urlopen
+
+from cc_links.prospects import normalize_url
 
 COLLINFO_URL = "https://index.commoncrawl.org/collinfo.json"
 
@@ -30,11 +34,12 @@ def load_crawls(limit):
     return [item["id"] for item in data[:limit]]
 
 
-def build_command(args, crawl, candidates_file):
+def build_command(args, crawl, candidates_file, *, per_category_limit=None,
+                  discovery_only=False, skip_discovery=False, part_shard=None):
     command = [
         sys.executable, os.path.join(os.path.dirname(__file__), "prospect_pipeline.py"),
         "--categories-file", args.categories_file,
-        "--per-category-limit", str(args.per_category_limit),
+        "--per-category-limit", str(per_category_limit or args.per_category_limit),
         "--crawl", crawl,
         "--db", args.db,
         "--candidates-file", candidates_file,
@@ -53,7 +58,63 @@ def build_command(args, crawl, candidates_file):
         command.extend(["--proxy", args.proxy])
     if args.proxy_file:
         command.extend(["--proxy-file", args.proxy_file])
+    if discovery_only:
+        command.append("--discovery-only")
+    if skip_discovery:
+        command.append("--skip-discovery")
+    if part_shard:
+        command.extend(["--part-shard", part_shard])
     return command
+
+
+def merge_candidate_files(paths, output_path):
+    """Merge shard JSONLs, de-duplicating normalized URLs."""
+    temporary = output_path + ".tmp"
+    seen = set()
+    written = 0
+    with open(temporary, "w", encoding="utf-8") as output:
+        for path in paths:
+            if not os.path.exists(path):
+                continue
+            with open(path, encoding="utf-8") as source:
+                for line in source:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    record = json.loads(line)
+                    normalized = normalize_url(record["url"])
+                    if normalized in seen:
+                        continue
+                    seen.add(normalized)
+                    output.write(json.dumps(record, ensure_ascii=False) + "\n")
+                    written += 1
+    os.replace(temporary, output_path)
+    return written
+
+
+def run_parallel_discovery(args, crawl, combined_file):
+    shard_count = args.discovery_shards
+    per_shard_limit = max(1, int(math.ceil(args.per_category_limit / shard_count)))
+    shard_files = [
+        os.path.join(args.state_dir, f"{crawl}.shard-{i}-of-{shard_count}.jsonl")
+        for i in range(shard_count)
+    ]
+
+    def run_shard(index):
+        command = build_command(
+            args, crawl, shard_files[index], per_category_limit=per_shard_limit,
+            discovery_only=True, part_shard=f"{index}/{shard_count}")
+        return subprocess.run(command).returncode
+
+    print(f"[multi] parallel discovery {crawl}: shards={shard_count}, "
+          f"per_shard_category_limit={per_shard_limit}", flush=True)
+    with ThreadPoolExecutor(max_workers=shard_count) as pool:
+        codes = list(pool.map(run_shard, range(shard_count)))
+    if any(codes):
+        return next(code for code in codes if code)
+    merged = merge_candidate_files(shard_files, combined_file)
+    print(f"[multi] merged {merged} unique candidates for {crawl}", flush=True)
+    return 0
 
 
 def run(args):
@@ -70,11 +131,16 @@ def run(args):
         candidates_file = os.path.join(args.state_dir, f"{crawl}.jsonl")
         print(f"[multi] starting {crawl}: current={current}, "
               f"need={args.target_total - current}", flush=True)
-        command = build_command(args, crawl, candidates_file)
-        result = subprocess.run(command)
-        if result.returncode:
-            print(f"[multi] {crawl} failed with exit code {result.returncode}", flush=True)
-            return result.returncode
+        if args.discovery_shards > 1:
+            code = run_parallel_discovery(args, crawl, candidates_file)
+            if not code:
+                code = subprocess.run(build_command(
+                    args, crawl, candidates_file, skip_discovery=True)).returncode
+        else:
+            code = subprocess.run(build_command(args, crawl, candidates_file)).returncode
+        if code:
+            print(f"[multi] {crawl} failed with exit code {code}", flush=True)
+            return code
         after = candidate_count(args.db)
         print(f"[multi] finished {crawl}: +{after - current}, total={after}", flush=True)
 
@@ -99,6 +165,8 @@ def main():
     parser.add_argument("--workers", type=int, default=64)
     parser.add_argument("--max-parts", type=int, default=300)
     parser.add_argument("--max-per-domain", type=int, default=10)
+    parser.add_argument("--discovery-shards", type=int, default=1,
+                        help="Parallel non-overlapping Parquet discovery workers")
     parser.add_argument("--source", choices=["cloudfront", "s3"], default="s3")
     parser.add_argument("--progress-interval", type=float, default=60)
     parser.add_argument("--exclude-file")
