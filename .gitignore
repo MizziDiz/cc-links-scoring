@@ -8,6 +8,8 @@ __pycache__/
 *.candidates.jsonl.state.json
 *_urls_scored.csv.gz
 latam_urls_*.txt
+quality_sample*.csv
+crawl_states/
 
 # Real proxy credentials -- never commit
 proxies.txt
