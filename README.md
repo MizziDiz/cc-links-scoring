@@ -67,6 +67,9 @@ python multi_crawl.py --target-total 100000 --max-crawls 12 \
 ```
 python sample_candidates.py --db prospects.db \
     --per-family 50 --out quality_sample.csv
+
+python validate_sample.py --input quality_sample.csv \
+    --out quality_sample_validated.csv --workers 20
 ```
 
 ## Установка
