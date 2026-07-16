@@ -13,6 +13,7 @@ from urllib.request import urlopen
 from cc_links.prospects import normalize_url
 
 COLLINFO_URL = "https://index.commoncrawl.org/collinfo.json"
+DISCOVERY_MARKER_SUFFIX = ".discovery-complete"
 
 
 def candidate_count(db_path):
@@ -32,6 +33,37 @@ def load_crawls(limit):
     with urlopen(COLLINFO_URL, timeout=30) as response:
         data = json.load(response)
     return [item["id"] for item in data[:limit]]
+
+
+def discovery_state_complete(candidates_file, expected_parts):
+    """Return whether a resumable discovery checkpoint has finished its work."""
+    state_path = candidates_file + ".state.json"
+    if not os.path.exists(state_path):
+        return False
+    try:
+        with open(state_path, encoding="utf-8") as source:
+            state = json.load(source)
+    except (OSError, ValueError, TypeError):
+        return False
+
+    remaining = state.get("remaining", {})
+    if remaining and all(value <= 0 for value in remaining.values()):
+        return True
+    scanned = set(state.get("scanned_parts", []))
+    required = state.get("allowed_parts_count", expected_parts)
+    return bool(required) and len(scanned) >= required
+
+
+def discovery_marker(candidates_file):
+    return candidates_file + DISCOVERY_MARKER_SUFFIX
+
+
+def mark_discovery_complete(candidates_file):
+    marker = discovery_marker(candidates_file)
+    temporary = marker + ".tmp"
+    with open(temporary, "w", encoding="utf-8") as output:
+        output.write("complete\n")
+    os.replace(temporary, marker)
 
 
 def build_command(args, crawl, candidates_file, *, per_category_limit=None,
@@ -114,6 +146,11 @@ def run_parallel_discovery(args, crawl, combined_file):
         return next(code for code in codes if code)
     merged = merge_candidate_files(shard_files, combined_file)
     print(f"[multi] merged {merged} unique candidates for {crawl}", flush=True)
+    if all(discovery_state_complete(path, args.max_parts) for path in shard_files):
+        mark_discovery_complete(combined_file)
+    else:
+        print(f"[multi] {crawl} has retryable unscanned parts; completion marker "
+              "not written", flush=True)
     return 0
 
 
@@ -131,7 +168,27 @@ def run(args):
         candidates_file = os.path.join(args.state_dir, f"{crawl}.jsonl")
         print(f"[multi] starting {crawl}: current={current}, "
               f"need={args.target_total - current}", flush=True)
-        if args.discovery_shards > 1:
+        marker_exists = os.path.exists(discovery_marker(candidates_file))
+        combined_state_exists = os.path.exists(candidates_file + ".state.json")
+        combined_complete = discovery_state_complete(candidates_file, args.max_parts)
+
+        if marker_exists or combined_complete:
+            if combined_complete and not marker_exists:
+                mark_discovery_complete(candidates_file)
+            print(f"[multi] discovery already complete for {crawl}; "
+                  "reusing {candidates_file}", flush=True)
+            code = subprocess.run(build_command(
+                args, crawl, candidates_file, skip_discovery=True)).returncode
+        elif combined_state_exists:
+            # A crawl started by an older sequential release must resume against
+            # its original checkpoint. Starting fresh shards here would rescan
+            # completed Parquet parts and could discard candidates already written.
+            print(f"[multi] resuming legacy sequential discovery for {crawl}",
+                  flush=True)
+            code = subprocess.run(build_command(args, crawl, candidates_file)).returncode
+            if not code and discovery_state_complete(candidates_file, args.max_parts):
+                mark_discovery_complete(candidates_file)
+        elif args.discovery_shards > 1:
             code = run_parallel_discovery(args, crawl, candidates_file)
             if not code:
                 code = subprocess.run(build_command(

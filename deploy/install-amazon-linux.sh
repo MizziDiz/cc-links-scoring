@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-RELEASE_TAG="${RELEASE_TAG:-prospects-v0.3.0}"
+RELEASE_TAG="${RELEASE_TAG:-prospects-v0.3.1}"
 REPO_URL="${REPO_URL:-https://github.com/MizziDiz/cc-links-scoring.git}"
 APP_DIR="${APP_DIR:-/opt/cc-links-scoring}"
 DATA_DIR="${DATA_DIR:-/var/lib/cc-prospects}"

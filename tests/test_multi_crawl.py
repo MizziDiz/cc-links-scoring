@@ -6,7 +6,14 @@ import unittest
 from pathlib import Path
 
 from cc_links.db import init_db
-from multi_crawl import build_command, candidate_count, merge_candidate_files
+from multi_crawl import (
+    build_command,
+    candidate_count,
+    discovery_marker,
+    discovery_state_complete,
+    mark_discovery_complete,
+    merge_candidate_files,
+)
 
 
 class MultiCrawlTests(unittest.TestCase):
@@ -40,6 +47,39 @@ class MultiCrawlTests(unittest.TestCase):
             self.assertEqual(merge_candidate_files(
                 [str(first), str(second)], str(output)), 1)
             self.assertEqual(len(output.read_text(encoding="utf-8").splitlines()), 1)
+
+    def test_discovery_state_complete_supports_legacy_and_sharded_states(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            candidates = Path(tmp) / "crawl.jsonl"
+            state = Path(str(candidates) + ".state.json")
+            state.write_text(json.dumps({
+                "scanned_parts": [0, 1, 2],
+                "remaining": {"A": 10},
+            }), encoding="utf-8")
+            self.assertTrue(discovery_state_complete(str(candidates), 3))
+            self.assertFalse(discovery_state_complete(str(candidates), 4))
+
+            state.write_text(json.dumps({
+                "scanned_parts": [0, 4],
+                "allowed_parts_count": 2,
+                "remaining": {"A": 10},
+            }), encoding="utf-8")
+            self.assertTrue(discovery_state_complete(str(candidates), 300))
+
+    def test_zero_remaining_marks_early_completion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            candidates = Path(tmp) / "crawl.jsonl"
+            Path(str(candidates) + ".state.json").write_text(json.dumps({
+                "scanned_parts": [0],
+                "remaining": {"A": 0, "B": 0},
+            }), encoding="utf-8")
+            self.assertTrue(discovery_state_complete(str(candidates), 300))
+
+    def test_completion_marker_is_atomic_and_discoverable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            candidates = str(Path(tmp) / "crawl.jsonl")
+            mark_discovery_complete(candidates)
+            self.assertTrue(Path(discovery_marker(candidates)).is_file())
 
 
 if __name__ == "__main__":

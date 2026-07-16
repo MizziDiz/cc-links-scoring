@@ -87,11 +87,15 @@ def _load_state(state_path):
     return None
 
 
-def _save_state(state_path, scanned_parts, remaining, domain_counts):
+def _save_state(state_path, scanned_parts, remaining, domain_counts,
+                allowed_parts_count=None):
     tmp = state_path + ".tmp"
+    payload = {"scanned_parts": sorted(scanned_parts), "remaining": remaining,
+               "domain_counts": domain_counts}
+    if allowed_parts_count is not None:
+        payload["allowed_parts_count"] = allowed_parts_count
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump({"scanned_parts": sorted(scanned_parts), "remaining": remaining,
-                    "domain_counts": domain_counts}, f)
+        json.dump(payload, f)
     os.replace(tmp, state_path)
 
 
@@ -264,7 +268,8 @@ def discover_by_countries(crawl: str, category_budgets: dict, tld_to_category: d
             out_f.flush()
 
             scanned_parts.add(i)
-            _save_state(state_path, scanned_parts, remaining, domain_counts)
+            _save_state(state_path, scanned_parts, remaining, domain_counts,
+                        len(allowed_idx))
 
             if progress:
                 progress(f"part {i+1}/{len(parts)}: +{found_this_part} matches; remaining: {remaining}")
