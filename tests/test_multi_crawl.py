@@ -11,8 +11,10 @@ from multi_crawl import (
     candidate_count,
     discovery_marker,
     discovery_state_complete,
+    existing_shard_count,
     mark_discovery_complete,
     merge_candidate_files,
+    resolve_discovery_shards,
 )
 
 
@@ -80,6 +82,19 @@ class MultiCrawlTests(unittest.TestCase):
             candidates = str(Path(tmp) / "crawl.jsonl")
             mark_discovery_complete(candidates)
             self.assertTrue(Path(discovery_marker(candidates)).is_file())
+
+    def test_auto_shards_follow_available_cpu_with_ceiling(self):
+        self.assertEqual(resolve_discovery_shards(0, cpu_count=1), 1)
+        self.assertEqual(resolve_discovery_shards(0, cpu_count=3), 3)
+        self.assertEqual(resolve_discovery_shards(0, cpu_count=16), 4)
+        self.assertEqual(resolve_discovery_shards(6, cpu_count=1), 6)
+
+    def test_existing_shard_layout_is_detected_for_resume(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for index in (0, 2, 3):
+                Path(tmp, f"crawl.shard-{index}-of-4.jsonl.state.json").touch()
+            self.assertEqual(existing_shard_count(tmp, "crawl"), 4)
+            self.assertIsNone(existing_shard_count(tmp, "other"))
 
 
 if __name__ == "__main__":

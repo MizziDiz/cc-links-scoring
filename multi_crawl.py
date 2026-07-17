@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Run prospect collection across recent Common Crawl snapshots until a target is met."""
 import argparse
+import glob
 import json
 import math
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -14,6 +16,7 @@ from cc_links.prospects import normalize_url
 
 COLLINFO_URL = "https://index.commoncrawl.org/collinfo.json"
 DISCOVERY_MARKER_SUFFIX = ".discovery-complete"
+SHARD_STATE_RE = re.compile(r"\.shard-(\d+)-of-(\d+)\.jsonl\.state\.json$")
 
 
 def candidate_count(db_path):
@@ -64,6 +67,32 @@ def mark_discovery_complete(candidates_file):
     with open(temporary, "w", encoding="utf-8") as output:
         output.write("complete\n")
     os.replace(temporary, marker)
+
+
+def resolve_discovery_shards(requested, cpu_count=None):
+    """Resolve 0 (auto) to a safe shard count for the available CPUs."""
+    if requested > 0:
+        return requested
+    available = cpu_count if cpu_count is not None else os.cpu_count()
+    return max(1, min(4, available or 1))
+
+
+def existing_shard_count(state_dir, crawl):
+    """Find an interrupted sharded layout so upgrades resume it unchanged."""
+    prefix = os.path.join(state_dir, f"{crawl}.shard-")
+    layouts = {}
+    for path in glob.glob(prefix + "*-of-*.jsonl.state.json"):
+        match = SHARD_STATE_RE.search(path)
+        if not match:
+            continue
+        index, count = (int(value) for value in match.groups())
+        if 0 <= index < count:
+            layouts.setdefault(count, set()).add(index)
+    if not layouts:
+        return None
+    # Prefer the layout with the most surviving checkpoints, then the larger
+    # shard count. Missing shard files are recreated by run_parallel_discovery.
+    return max(layouts, key=lambda count: (len(layouts[count]), count))
 
 
 def build_command(args, crawl, candidates_file, *, per_category_limit=None,
@@ -124,8 +153,8 @@ def merge_candidate_files(paths, output_path):
     return written
 
 
-def run_parallel_discovery(args, crawl, combined_file):
-    shard_count = args.discovery_shards
+def run_parallel_discovery(args, crawl, combined_file, shard_count=None):
+    shard_count = shard_count or args.discovery_shards
     per_shard_limit = max(1, int(math.ceil(args.per_category_limit / shard_count)))
     shard_files = [
         os.path.join(args.state_dir, f"{crawl}.shard-{i}-of-{shard_count}.jsonl")
@@ -156,6 +185,11 @@ def run_parallel_discovery(args, crawl, combined_file):
 
 def run(args):
     os.makedirs(args.state_dir, exist_ok=True)
+    requested_shards = args.discovery_shards
+    args.discovery_shards = resolve_discovery_shards(requested_shards)
+    if requested_shards == 0:
+        print(f"[multi] auto discovery shards={args.discovery_shards} "
+              f"for cpu_count={os.cpu_count() or 1}", flush=True)
     crawls = args.crawls or load_crawls(args.max_crawls)
     print(f"[multi] target={args.target_total}, current={candidate_count(args.db)}, "
           f"crawls={crawls}", flush=True)
@@ -176,7 +210,7 @@ def run(args):
             if combined_complete and not marker_exists:
                 mark_discovery_complete(candidates_file)
             print(f"[multi] discovery already complete for {crawl}; "
-                  "reusing {candidates_file}", flush=True)
+                  f"reusing {candidates_file}", flush=True)
             code = subprocess.run(build_command(
                 args, crawl, candidates_file, skip_discovery=True)).returncode
         elif combined_state_exists:
@@ -188,8 +222,15 @@ def run(args):
             code = subprocess.run(build_command(args, crawl, candidates_file)).returncode
             if not code and discovery_state_complete(candidates_file, args.max_parts):
                 mark_discovery_complete(candidates_file)
-        elif args.discovery_shards > 1:
-            code = run_parallel_discovery(args, crawl, candidates_file)
+        elif args.discovery_shards > 1 or existing_shard_count(args.state_dir, crawl):
+            resume_shards = existing_shard_count(args.state_dir, crawl)
+            if resume_shards and resume_shards != args.discovery_shards:
+                print(f"[multi] resuming existing {resume_shards}-shard layout for "
+                      f"{crawl}; configured future shard count is "
+                      f"{args.discovery_shards}", flush=True)
+            code = run_parallel_discovery(
+                args, crawl, candidates_file,
+                shard_count=resume_shards or args.discovery_shards)
             if not code:
                 code = subprocess.run(build_command(
                     args, crawl, candidates_file, skip_discovery=True)).returncode
@@ -222,8 +263,9 @@ def main():
     parser.add_argument("--workers", type=int, default=64)
     parser.add_argument("--max-parts", type=int, default=300)
     parser.add_argument("--max-per-domain", type=int, default=10)
-    parser.add_argument("--discovery-shards", type=int, default=1,
-                        help="Parallel non-overlapping Parquet discovery workers")
+    parser.add_argument("--discovery-shards", type=int, default=0,
+                        help="Parallel non-overlapping Parquet discovery workers; "
+                             "0 selects min(CPUs, 4)")
     parser.add_argument("--source", choices=["cloudfront", "s3"], default="s3")
     parser.add_argument("--progress-interval", type=float, default=60)
     parser.add_argument("--exclude-file")

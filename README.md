@@ -46,7 +46,7 @@ EC2 instance role должен разрешать `s3:GetObject` для bucket `
 возобновляет его после ошибки и пишет обычную строку прогресса раз в минуту.
 
 ```
-curl -fsSLO https://github.com/MizziDiz/cc-links-scoring/releases/download/prospects-v0.3.1/install-amazon-linux.sh
+curl -fsSLO https://github.com/MizziDiz/cc-links-scoring/releases/download/prospects-v0.3.2/install-amazon-linux.sh
 chmod +x install-amazon-linux.sh
 ./install-amazon-linux.sh
 sudo journalctl -fu cc-prospects.service
