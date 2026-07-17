@@ -2,8 +2,8 @@
 import json
 import os
 from dataclasses import dataclass, asdict
-from typing import List, Optional
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from typing import List, Optional, Tuple
+from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
 
 from cc_links.engines import get_generator
 
@@ -47,6 +47,34 @@ def discovery_url_terms(path: Optional[str] = None) -> List[str]:
     return sorted({t.lower() for t in terms if t.lower() not in blocked})
 
 
+def discovery_url_patterns(path: Optional[str] = None,
+                           family: Optional[str] = None) -> List[Tuple[str, ...]]:
+    """Return selective URL clauses; terms within a clause must all match.
+
+    Rules may provide an explicit ``discovery`` list of string lists. This allows
+    precise index filters such as (``/bitrix/redirect.php`` AND ``goto=``) without
+    making either broad term a global OR condition. Legacy rules fall back to one
+    clause per selective ``url_contains`` term.
+    """
+    _, rules = load_prospect_rules(path)
+    legacy_terms = set(discovery_url_terms(path))
+    patterns = set()
+    for rule in rules:
+        if family is not None and rule.get("family") != family:
+            continue
+        explicit = rule.get("discovery")
+        if explicit:
+            for clause in explicit:
+                normalized = tuple(dict.fromkeys(str(term).lower() for term in clause if term))
+                if normalized:
+                    patterns.add(normalized)
+            continue
+        for term in rule.get("signals", {}).get("url_contains", []):
+            if term.lower() in legacy_terms:
+                patterns.add((term.lower(),))
+    return sorted(patterns)
+
+
 def normalize_url(url: str) -> str:
     """Conservative URL normalization for deduplication."""
     try:
@@ -67,12 +95,40 @@ def normalize_url(url: str) -> str:
     return urlunsplit((scheme, netloc, path, query, ""))
 
 
+def source_url_for_matching(url: str) -> str:
+    """Mask embedded destination URLs before classifying the source page.
+
+    Redirect URLs frequently contain a complete target URL. Platform terms in that
+    target (for example ``viewtopic.php``) describe the destination, not the source.
+    Redirect-family rules deliberately use the original URL; all other rules use
+    this masked representation.
+    """
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return url.lower()
+    pairs = []
+    for key, value in parse_qsl(parsed.query, keep_blank_values=True):
+        decoded = unquote(value).strip().lower()
+        if "http://" in decoded or "https://" in decoded:
+            value = "{target}"
+        pairs.append((key, value))
+    path = parsed.path
+    path_lower = unquote(path).lower()
+    positions = [position for marker in ("http://", "https://")
+                 if (position := path_lower.find(marker)) >= 0]
+    if positions:
+        path = path[:min(positions)] + "{target}"
+    return urlunsplit((parsed.scheme, parsed.netloc, path, urlencode(pairs), "")).lower()
+
+
 def classify_prospect(html: str, url: str, footprints_path: Optional[str] = None,
                       minimum_score: Optional[int] = None) -> List[ProspectMatch]:
     defaults, rules = load_prospect_rules(footprints_path)
     threshold = minimum_score if minimum_score is not None else defaults.get("minimum_score", 50)
     min_types = defaults.get("minimum_signal_types", 2)
     url_lower = url.lower()
+    source_url_lower = source_url_for_matching(url)
     html_lower = html.lower()
     generator = get_generator(html)
     matches = []
@@ -81,9 +137,14 @@ def classify_prospect(html: str, url: str, footprints_path: Optional[str] = None
         found = []
         types = set()
         signals = rule.get("signals", {})
+        rule_url = url_lower if rule.get("family") == "redirect_backlink" else source_url_lower
         for term in signals.get("url_contains", []):
-            if term.lower() in url_lower:
+            if term.lower() in rule_url:
                 found.append(f"url:{term}")
+                types.add("url")
+        for clause in signals.get("url_all", []):
+            if clause and all(term.lower() in rule_url for term in clause):
+                found.append("url_all:" + " + ".join(clause))
                 types.add("url")
         for term in signals.get("generator_contains", []):
             if term.lower() in generator:

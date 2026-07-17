@@ -154,6 +154,152 @@
       }
     },
     {
+      "id": "nukeviet_redirect",
+      "family": "redirect_backlink",
+      "platform": "NukeViet",
+      "minimum_score": 50,
+      "minimum_signal_types": 1,
+      "discovery": [["nv_redirect=", "nv="]],
+      "signals": {
+        "url_all": [["nv_redirect=", "nv="]],
+        "html_contains": ["nukeviet", "nv3-content"]
+      }
+    },
+    {
+      "id": "bitrix_redirect",
+      "family": "redirect_backlink",
+      "platform": "Bitrix",
+      "minimum_score": 50,
+      "minimum_signal_types": 1,
+      "discovery": [
+        ["/bitrix/redirect.php", "goto="],
+        ["/bitrix/rk.php", "goto="],
+        ["/bitrix/click.php", "goto="]
+      ],
+      "signals": {
+        "url_all": [
+          ["/bitrix/redirect.php", "goto="],
+          ["/bitrix/rk.php", "goto="],
+          ["/bitrix/click.php", "goto="]
+        ],
+        "html_contains": ["1c-bitrix", "bx-core"]
+      }
+    },
+    {
+      "id": "google_redirect",
+      "family": "redirect_backlink",
+      "platform": "Google",
+      "minimum_score": 50,
+      "minimum_signal_types": 1,
+      "discovery": [
+        ["google.", "/url?", "q="],
+        ["google.", "/url?", "url="]
+      ],
+      "signals": {
+        "url_all": [
+          ["google.", "/url?", "q="],
+          ["google.", "/url?", "url="]
+        ]
+      }
+    },
+    {
+      "id": "generic_external_redirect",
+      "family": "redirect_backlink",
+      "platform": null,
+      "minimum_score": 50,
+      "minimum_signal_types": 1,
+      "discovery": [
+        ["/redirect.php", "url="],
+        ["/redirect.asp", "url="],
+        ["/redirect?", "url="],
+        ["/go.php", "url="],
+        ["/go?http"],
+        ["/proxy.php", "link="],
+        ["/opener.php", "url="],
+        ["/www/delivery/ck.php", "oadest"]
+      ],
+      "signals": {
+        "url_all": [
+          ["/redirect.php", "url="],
+          ["/redirect.asp", "url="],
+          ["/redirect?", "url="],
+          ["/go.php", "url="],
+          ["/go?http"],
+          ["/proxy.php", "link="],
+          ["/opener.php", "url="],
+          ["/www/delivery/ck.php", "oadest"]
+        ]
+      }
+    },
+    {
+      "id": "mediawiki_user_page",
+      "family": "profile_page",
+      "platform": "MediaWiki",
+      "minimum_score": 50,
+      "minimum_signal_types": 1,
+      "discovery": [
+        ["index.php?title=user:"], ["index.php?title=user%3a"],
+        ["index.php?title=usuario:"], ["index.php?title=usuario%3a"],
+        ["index.php?title=utilisateur:"], ["index.php?title=utilisateur%3a"],
+        ["index.php?title=benutzer:"], ["index.php?title=benutzer%3a"]
+      ],
+      "signals": {
+        "url_all": [
+          ["index.php?title=user:"], ["index.php?title=user%3a"],
+          ["index.php?title=usuario:"], ["index.php?title=usuario%3a"],
+          ["index.php?title=utilisateur:"], ["index.php?title=utilisateur%3a"],
+          ["index.php?title=benutzer:"], ["index.php?title=benutzer%3a"]
+        ],
+        "generator_contains": ["mediawiki"],
+        "html_contains": ["mw-content-text", "mw-userpage"]
+      }
+    },
+    {
+      "id": "bbpress_profile",
+      "family": "profile_page",
+      "platform": "bbPress",
+      "minimum_score": 50,
+      "minimum_signal_types": 1,
+      "discovery": [["/forums/users/"]],
+      "signals": {
+        "url_contains": ["/forums/users/"],
+        "html_contains": ["bbpress", "bbp-user-page"]
+      }
+    },
+    {
+      "id": "discuz_thread",
+      "family": "forum",
+      "platform": "Discuz",
+      "minimum_score": 50,
+      "minimum_signal_types": 1,
+      "discovery": [
+        ["forum.php?mod=viewthread"],
+        ["viewthread.php?tid="],
+        ["/thread-", ".html"]
+      ],
+      "signals": {
+        "url_all": [
+          ["forum.php?mod=viewthread"],
+          ["viewthread.php?tid="],
+          ["/thread-", ".html"]
+        ],
+        "generator_contains": ["discuz"],
+        "html_contains": ["powered by discuz", "discuz!"]
+      }
+    },
+    {
+      "id": "generic_board_post",
+      "family": "forum",
+      "platform": null,
+      "minimum_score": 50,
+      "minimum_signal_types": 1,
+      "discovery": [["/bbs/board.php", "bo_table=", "wr_id="]],
+      "signals": {
+        "url_all": [["/bbs/board.php", "bo_table=", "wr_id="]],
+        "html_contains": ["bo_table", "wr_id"]
+      }
+    },
+    {
       "id": "trackback",
       "family": "trackback",
       "platform": null,

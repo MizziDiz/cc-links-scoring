@@ -8,7 +8,7 @@ Type=simple
 User=ec2-user
 WorkingDirectory=/opt/cc-links-scoring
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/opt/cc-links-scoring/.venv/bin/python /opt/cc-links-scoring/multi_crawl.py --target-total 100000 --max-crawls 12 --discovery-shards 0 --state-dir /var/lib/cc-prospects/crawls --categories-file /opt/cc-links-scoring/categories.json --per-category-limit 5000 --max-parts 300 --max-per-domain 10 --min-score 50 --db /var/lib/cc-prospects/prospects.db --workers 64 --source s3 --progress-interval 60
+ExecStart=/opt/cc-links-scoring/.venv/bin/python /opt/cc-links-scoring/multi_crawl.py --target-total 500000 --max-crawls 24 --discovery-shards 0 --state-dir /var/lib/cc-prospects/crawls-v033 --categories-file /opt/cc-links-scoring/categories.json --per-category-limit 5000 --max-parts 300 --max-per-domain 10 --min-score 50 --db /var/lib/cc-prospects/prospects.db --workers 64 --source s3 --progress-interval 60
 Restart=on-failure
 RestartSec=30
 TimeoutStopSec=300

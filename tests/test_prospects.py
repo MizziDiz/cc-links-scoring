@@ -6,7 +6,8 @@ from pathlib import Path
 
 from cc_links.db import (enforce_candidate_floor, enforce_domain_cap, init_db,
                          mark_url_processed, upsert_candidate)
-from cc_links.prospects import classify_prospect, discovery_url_terms, normalize_url
+from cc_links.prospects import (classify_prospect, discovery_url_patterns,
+                                discovery_url_terms, normalize_url)
 
 
 class ProspectClassifierTests(unittest.TestCase):
@@ -47,6 +48,42 @@ class ProspectClassifierTests(unittest.TestCase):
         terms = discovery_url_terms()
         self.assertIn("wp-comments-post.php", terms)
         self.assertNotIn("/forum/", terms)
+
+    def test_compound_discovery_patterns_preserve_conjunction(self):
+        patterns = discovery_url_patterns()
+        self.assertIn(("/bitrix/redirect.php", "goto="), patterns)
+        self.assertNotIn(("goto=",), patterns)
+
+    def test_known_positive_redirect_patterns(self):
+        cases = [
+            "https://example.vn/index.php?nv=statistics&nv_redirect=aHR0cHM6Ly90LmV4YW1wbGU=",
+            "https://example.ru/bitrix/rk.php?goto=https://target.example/page",
+            "https://www.google.co.zm/url?q=https://target.example/",
+            "https://example.org/proxy.php?link=https://target.example/",
+        ]
+        for url in cases:
+            with self.subTest(url=url):
+                matches = classify_prospect("<html></html>", url)
+                self.assertEqual(matches[0].family, "redirect_backlink")
+
+    def test_broad_redirect_parameter_alone_is_rejected(self):
+        self.assertEqual(classify_prospect(
+            "<html></html>", "https://example.org/article?url=https://target.example/"), [])
+
+    def test_embedded_target_does_not_classify_the_source_as_forum(self):
+        matches = classify_prospect(
+            "<html></html>",
+            "https://www.google.co.zm/url?q=https://target.example/viewtopic.php?t=7")
+        self.assertEqual([match.family for match in matches], ["redirect_backlink"])
+
+    def test_known_positive_page_roles(self):
+        wiki = classify_prospect(
+            '<meta name="generator" content="MediaWiki 1.41">',
+            "https://example.org/index.php?title=User:Example")
+        self.assertEqual(wiki[0].family, "profile_page")
+        discuz = classify_prospect(
+            "<html></html>", "https://example.cn/forum.php?mod=viewthread&tid=7")
+        self.assertEqual(discuz[0].platform, "Discuz")
 
 
 class ProspectDatabaseTests(unittest.TestCase):

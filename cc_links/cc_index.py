@@ -99,12 +99,34 @@ def _save_state(state_path, scanned_parts, remaining, domain_counts,
     os.replace(tmp, state_path)
 
 
+def _url_match_sql(url_terms=None, url_patterns=None):
+    if url_patterns:
+        clauses = []
+        for pattern in url_patterns:
+            terms = [str(term).lower().replace("'", "''") for term in pattern]
+            if terms:
+                clauses.append("(" + " AND ".join(
+                    f"INSTR(LOWER(url), '{term}') > 0" for term in terms) + ")")
+        return "(" + " OR ".join(clauses) + ")" if clauses else ""
+    if url_terms:
+        escaped_terms = [str(term).lower().replace("'", "''") for term in url_terms]
+        clauses = [f"INSTR(LOWER(url), '{term}') > 0" for term in escaped_terms]
+        return "(" + " OR ".join(clauses) + ")"
+    return ""
+
+
+def _url_filter_sql(url_terms=None, url_patterns=None):
+    expression = _url_match_sql(url_terms=url_terms, url_patterns=url_patterns)
+    return "AND " + expression if expression else ""
+
+
 def discover_by_countries(crawl: str, category_budgets: dict, tld_to_category: dict,
                            is_excluded_fn, out_path: str,
                            max_parts=None, per_tld_cap: int = 250_000,
                            max_per_domain: int = None, progress=None, resume: bool = True,
                            max_retries: int = 6, retry_backoff: float = 8.0, proxies=None,
-                           part_delay: float = 0.0, url_terms=None, part_shard=None):
+                           part_delay: float = 0.0, url_terms=None, url_patterns=None,
+                           redirect_url_patterns=None, part_shard=None):
     """Scan Parquet index parts, streaming matches to out_path (JSONL) as they're found.
 
     category_budgets: {"Colombia": 100000, "Other Africa": 100000, ...} -- max pages
@@ -195,21 +217,33 @@ def discover_by_countries(crawl: str, category_budgets: dict, tld_to_category: d
             # remaining need among active ccTLDs (bounded by a sane ceiling so one
             # freak part can't blow up memory).
             effective_cap = min(max(remaining[c] for c in active_cats), per_tld_cap)
-            url_filter = ""
-            if url_terms:
-                escaped_terms = [str(t).lower().replace("'", "''") for t in url_terms]
-                clauses = [f"INSTR(LOWER(url), '{t}') > 0" for t in escaped_terms]
-                url_filter = "AND (" + " OR ".join(clauses) + ")"
+            url_match = _url_match_sql(url_terms=url_terms, url_patterns=url_patterns)
+            redirect_match = _url_match_sql(url_patterns=redirect_url_patterns)
+            if url_match:
+                status_filter = (
+                    "AND (((fetch_status = 200 AND content_mime_detected = 'text/html') "
+                    f"AND {url_match})"
+                )
+                if redirect_match:
+                    status_filter += (
+                        " OR ((fetch_status BETWEEN 300 AND 399) "
+                        f"AND {redirect_match})"
+                    )
+                status_filter += ")"
+            else:
+                status_filter = (
+                    "AND fetch_status = 200 "
+                    "AND content_mime_detected = 'text/html'"
+                )
             query = f"""
                 SELECT url, url_host_tld, url_host_registered_domain,
-                       warc_filename, warc_record_offset, warc_record_length
+                       warc_filename, warc_record_offset, warc_record_length,
+                       fetch_status, content_mime_detected
                 FROM (
                     SELECT *, ROW_NUMBER() OVER (PARTITION BY url_host_tld) AS rn
                     FROM read_parquet('{part_url}')
-                    WHERE fetch_status = 200
-                      AND content_mime_detected = 'text/html'
-                      AND url_host_tld IN ({tld_list_sql})
-                      {url_filter}
+                    WHERE url_host_tld IN ({tld_list_sql})
+                      {status_filter}
                 )
                 WHERE rn <= {effective_cap}
             """
@@ -247,7 +281,7 @@ def discover_by_countries(crawl: str, category_budgets: dict, tld_to_category: d
                 continue
 
             found_this_part = 0
-            for url, tld, reg_domain, warc_filename, offset, length in rows:
+            for url, tld, reg_domain, warc_filename, offset, length, fetch_status, content_mime in rows:
                 cat = tld_to_category.get(tld)
                 if cat is None or remaining.get(cat, 0) <= 0:
                     continue
@@ -262,6 +296,7 @@ def discover_by_countries(crawl: str, category_budgets: dict, tld_to_category: d
                     "url": url, "url_host_tld": tld, "url_host_registered_domain": reg_domain,
                     "bucket": cat,
                     "filename": warc_filename, "offset": offset, "length": length,
+                    "fetch_status": fetch_status, "content_mime": content_mime,
                 }) + "\n")
                 remaining[cat] -= 1
                 found_this_part += 1

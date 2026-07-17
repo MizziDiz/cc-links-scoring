@@ -16,11 +16,22 @@ from cc_links.db import (enforce_candidate_floor, enforce_domain_cap, init_db,
                          mark_url_processed, upsert_candidate)
 from cc_links.exclusions import is_excluded, load_excluded_domains
 from cc_links.fetch import domain_of, fetch_warc_record, parse_html_record
-from cc_links.prospects import (classify_prospect, discovery_url_terms,
+from cc_links.prospects import (classify_prospect, discovery_url_patterns,
                                 normalize_url)
 
 
 def fetch_and_classify(record, footprints, minimum_score):
+    status = int(record.get("fetch_status") or 200)
+    if 300 <= status <= 399:
+        matches = [match for match in classify_prospect(
+            "", record["url"], footprints, minimum_score)
+                   if match.family == "redirect_backlink"]
+        for match in matches:
+            match.score = max(match.score, 85)
+            match.signals.append(f"cc_status:{status}")
+        if matches:
+            return {"ok": True, "record": record, "matches": matches}
+        return {"ok": True, "record": record, "matches": []}
     try:
         raw = fetch_warc_record(record["filename"], record["offset"], record["length"])
         html = parse_html_record(raw)
@@ -37,8 +48,11 @@ def run(args):
     categories, tld_to_category = load_category_map(args.categories_file)
     budgets = {name: args.per_category_limit for name in categories}
     candidates_file = args.candidates_file or args.db + ".prospects.jsonl"
-    terms = discovery_url_terms(args.footprints)
-    print(f"[footprints] {len(terms)} selective URL terms used for index discovery")
+    patterns = discovery_url_patterns(args.footprints)
+    redirect_patterns = discovery_url_patterns(args.footprints, family="redirect_backlink")
+    compound = sum(len(pattern) > 1 for pattern in patterns)
+    print(f"[footprints] {len(patterns)} selective URL patterns used for index discovery "
+          f"({compound} compound)")
 
     discovery_proxies = None
     fetch_mod.rate_limiter.set_rate(args.rate_limit)
@@ -56,7 +70,8 @@ def run(args):
             lambda d: is_excluded(d, excluded), candidates_file,
             max_parts=args.max_parts, max_per_domain=args.max_per_domain,
             progress=lambda m: print(f"[discover] {m}"), proxies=discovery_proxies,
-            part_delay=args.discover_delay, url_terms=terms,
+            part_delay=args.discover_delay, url_patterns=patterns,
+            redirect_url_patterns=redirect_patterns,
             part_shard=(tuple(int(v) for v in args.part_shard.split("/"))
                         if args.part_shard else None),
         )
