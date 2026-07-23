@@ -36,6 +36,61 @@ pip install -r requirements.txt
 Логи используют стандартный `logging`. Уровень по умолчанию — `INFO`; для
 диагностики запустите команду с `LOG_LEVEL=DEBUG`.
 
+## Docker Compose: запуск одной командой
+
+Docker-путь опционален: существующий запуск через `ec2_setup.sh`, venv и прямой
+вызов `pipeline.py` остаётся без изменений. Контейнер изолирует Python и
+системные зависимости; `lxml` и `duckdb` собираются или устанавливаются как
+wheels на отдельной build-стадии, а компилятор не попадает в итоговый slim-образ.
+
+Один раз создайте локальный конфиг окружения и отредактируйте его:
+
+```bash
+cp .env.example .env
+```
+
+После этого полный discovery → fetch запускается одной командой:
+
+```bash
+docker compose up --build
+```
+
+Для legacy Docker Compose эквивалентная команда:
+
+```bash
+docker-compose up --build
+```
+
+Файл `.env` gitignored и не попадает в Docker build context. Gateway credentials
+и токены задаются только там; реальные адреса, credentials и AWS-ключи нельзя
+добавлять в `docker-compose.yml`, `run.config.json` или Dockerfile.
+
+Настройки распределены так:
+
+- [`run.config.json`](run.config.json) остаётся базовой конфигурацией и
+  продолжает использоваться обычным venv-запуском;
+- [`.env.example`](.env.example) документирует Docker-переменные и безопасные
+  примеры; локальный `.env` передаётся сервису `pipeline`;
+- непустые `PIPELINE_*` из `.env` преобразуются в CLI-флаги и имеют приоритет
+  над соответствующими полями `run.config.json`;
+- `PIPELINE_SOURCE` принимает `cloudfront`, `s3` или `gateway`. Для `gateway`
+  entrypoint собирает proxy URL в памяти из `GATEWAY_SCHEME`, `GATEWAY_HOST` и
+  `GATEWAY_CRED` и передаёт его Python-процессу через окружение; секрет не
+  записывается в config или аргументы процесса;
+- `LOG_LEVEL` управляет стандартным Python logging.
+
+Каталоги `DB_HOST_DIR` и `CANDIDATES_HOST_DIR` монтируются соответственно в
+`/data/db` и `/data/candidates`. Поэтому SQLite-база, JSONL candidates и
+checkpoint state переживают пересборку и перезапуск контейнера. По умолчанию
+результат находится в `./data/db/latam.db`, а candidates — в
+`./data/candidates/candidates.jsonl`.
+
+Для продолжения с готового checkpoint задайте в `.env`
+`PIPELINE_SKIP_DISCOVERY=true`. Для отдельного discovery-прогона используйте
+`PIPELINE_DISCOVERY_ONLY=true`. При `PIPELINE_SOURCE=s3` boto3 использует
+стандартную AWS credential chain; на EC2 предпочтителен instance profile,
+доступный контейнеру, без постоянных ключей в `.env`.
+
 Основная конфигурация запуска находится в
 [`run.config.json`](run.config.json). Она задаёт crawl, выходную SQLite-базу,
 категории, лимиты, источник WARC, число workers и параметры checkpoint.

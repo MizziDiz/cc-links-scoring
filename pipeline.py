@@ -25,6 +25,7 @@ cc_links/exclusions.json.
 import argparse
 import json
 import logging
+import os
 import sqlite3
 import sys
 import time
@@ -209,6 +210,7 @@ def run_countries(
     excluded = load_excluded_domains(exclude_file)
     candidates_file = candidates_file or (db_path + ".candidates.jsonl")
     fetch_mod.rate_limiter.set_rate(rate_limit)
+    proxy = proxy or os.getenv("CC_GATEWAY_PROXY")
     discovery_proxies = None
     if source == "s3":
         # High-throughput path for running inside AWS: fetch WARC records straight
@@ -450,11 +452,15 @@ def main() -> None:
                               help="Seconds to pause between index parts during discovery -- paces direct "
                                    "(un-proxied) parquet reads under CloudFront's throttle threshold. "
                                    "Try 1-2s for a large multi-part scan.")
-    p_countries.add_argument("--no-links", action="store_true",
-                              help="Don't store individual outbound links (only their count per page). "
-                                   "For engine-market-share analysis the links table isn't needed and is "
-                                   "by far the biggest cost: ~100+ link rows/page means ~50GB+ for 1.4M "
-                                   "pages, vs a few hundred MB for pages alone")
+    links_mode = p_countries.add_mutually_exclusive_group()
+    links_mode.add_argument("--no-links", action="store_true",
+                            help="Don't store individual outbound links (only their count per page). "
+                                 "For engine-market-share analysis the links table isn't needed and is "
+                                 "by far the biggest cost: ~100+ link rows/page means ~50GB+ for 1.4M "
+                                 "pages, vs a few hundred MB for pages alone")
+    links_mode.add_argument("--store-links", dest="no_links", action="store_false",
+                            help="Store individual outbound links, overriding no_links=true in a config.")
+    p_countries.set_defaults(no_links=False)
 
     args = parser.parse_args()
 
@@ -464,6 +470,8 @@ def main() -> None:
             cfg = json.load(f)
         on_cli = {a.lstrip("-").split("=")[0].replace("-", "_")
                   for a in sys.argv[1:] if a.startswith("--")}
+        if "store_links" in on_cli:
+            on_cli.add("no_links")
         for key, val in cfg.items():
             if key.startswith(("comment", "_")):
                 continue

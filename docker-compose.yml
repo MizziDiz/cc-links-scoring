@@ -1,0 +1,18 @@
+services:
+  pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    init: true
+    restart: "no"
+    volumes:
+      - type: bind
+        source: ${DB_HOST_DIR:-./data/db}
+        target: /data/db
+      - type: bind
+        source: ${CANDIDATES_HOST_DIR:-./data/candidates}
+        target: /data/candidates
+
+  # опциональный сервис mysql добавляется отдельным PR
