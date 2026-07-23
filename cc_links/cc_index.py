@@ -19,6 +19,7 @@ import io
 import json
 import os
 import time
+from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple
 
 import duckdb
 import requests
@@ -32,9 +33,11 @@ PATHS_URL = BASE_URL + "crawl-data/{crawl}/cc-index-table.paths.gz"
 # periodically and capping how many rows a single query can materialize keeps
 # memory bounded.
 _RECONNECT_EVERY = 15
+Proxy = Tuple[str, str, Optional[str], Optional[str]]
+Candidate = Dict[str, Any]
 
 
-def get_index_parts(crawl: str):
+def get_index_parts(crawl: str) -> List[str]:
     """Return HTTPS URLs of the cc-index Parquet parts (subset=warc) for a crawl."""
     resp = requests.get(PATHS_URL.format(crawl=crawl), timeout=30)
     resp.raise_for_status()
@@ -43,7 +46,7 @@ def get_index_parts(crawl: str):
     return [BASE_URL + p for p in paths if "/subset=warc/" in p]
 
 
-def _connect(proxy=None):
+def _connect(proxy: Optional[Proxy] = None) -> duckdb.DuckDBPyConnection:
     con = duckdb.connect()
     con.execute("INSTALL httpfs; LOAD httpfs;")
     con.execute("SET memory_limit = '1GB';")
@@ -57,7 +60,7 @@ def _connect(proxy=None):
     return con
 
 
-def _parse_proxy_line(line: str):
+def _parse_proxy_line(line: str) -> Optional[Proxy]:
     parts = line.strip().split(":")
     if len(parts) == 4:
         return (parts[0], parts[1], parts[2], parts[3])
@@ -66,9 +69,9 @@ def _parse_proxy_line(line: str):
     return None
 
 
-def load_proxies(path: str):
+def load_proxies(path: str) -> List[Proxy]:
     """Read `host:port:user:pass` (or `host:port`) lines into (host,port,user,pw) tuples."""
-    out = []
+    out: List[Proxy] = []
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -80,14 +83,19 @@ def load_proxies(path: str):
     return out
 
 
-def _load_state(state_path):
+def _load_state(state_path: str) -> Optional[Dict[str, Any]]:
     if os.path.exists(state_path):
         with open(state_path, "r", encoding="utf-8") as f:
             return json.load(f)
     return None
 
 
-def _save_state(state_path, scanned_parts, remaining, domain_counts):
+def _save_state(
+    state_path: str,
+    scanned_parts: Set[int],
+    remaining: Mapping[str, int],
+    domain_counts: Mapping[str, int],
+) -> None:
     tmp = state_path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump({"scanned_parts": sorted(scanned_parts), "remaining": remaining,
@@ -95,12 +103,22 @@ def _save_state(state_path, scanned_parts, remaining, domain_counts):
     os.replace(tmp, state_path)
 
 
-def discover_by_countries(crawl: str, category_budgets: dict, tld_to_category: dict,
-                           is_excluded_fn, out_path: str,
-                           max_parts=None, per_tld_cap: int = 250_000,
-                           max_per_domain: int = None, progress=None, resume: bool = True,
-                           max_retries: int = 6, retry_backoff: float = 8.0, proxies=None,
-                           part_delay: float = 0.0):
+def discover_by_countries(
+    crawl: str,
+    category_budgets: Mapping[str, int],
+    tld_to_category: Mapping[str, str],
+    is_excluded_fn: Callable[[str], bool],
+    out_path: str,
+    max_parts: Optional[int] = None,
+    per_tld_cap: int = 250_000,
+    max_per_domain: Optional[int] = None,
+    progress: Optional[Callable[[str], None]] = None,
+    resume: bool = True,
+    max_retries: int = 6,
+    retry_backoff: float = 8.0,
+    proxies: Optional[Sequence[Proxy]] = None,
+    part_delay: float = 0.0,
+) -> Dict[str, int]:
     """Scan Parquet index parts, streaming matches to out_path (JSONL) as they're found.
 
     category_budgets: {"Colombia": 100000, "Other Africa": 100000, ...} -- max pages
@@ -128,9 +146,15 @@ def discover_by_countries(crawl: str, category_budgets: dict, tld_to_category: d
     """
     state_path = out_path + ".state.json"
     state = _load_state(state_path) if resume else None
-    scanned_parts = set(state["scanned_parts"]) if state else set()
-    remaining = state["remaining"] if state else dict(category_budgets)
-    domain_counts = state["domain_counts"] if state and "domain_counts" in state else {}
+    scanned_parts: Set[int] = set(state["scanned_parts"]) if state else set()
+    remaining: Dict[str, int] = (
+        dict(state["remaining"]) if state else dict(category_budgets)
+    )
+    domain_counts: Dict[str, int] = (
+        dict(state["domain_counts"])
+        if state and "domain_counts" in state
+        else {}
+    )
 
     parts = get_index_parts(crawl)
     if max_parts and max_parts < len(parts):
@@ -145,8 +169,8 @@ def discover_by_countries(crawl: str, category_budgets: dict, tld_to_category: d
     # every _RECONNECT_EVERY) so the IP actually rotates.
     _prox_idx = [0]
 
-    def make_conn():
-        p = None
+    def make_conn() -> duckdb.DuckDBPyConnection:
+        p: Optional[Proxy] = None
         if proxies:
             p = proxies[_prox_idx[0] % len(proxies)]
             _prox_idx[0] += 1
@@ -204,24 +228,24 @@ def discover_by_countries(crawl: str, category_budgets: dict, tld_to_category: d
             # over HTTPS with no proxy, so a long fast scan gets CloudFront-throttled
             # (surfaces as DuckDB "HTTP 0 Internal Server Error"). Retry with backoff
             # on a fresh connection; the throttle is transient and clears on cooldown.
-            rows = None
-            last_err = None
+            rows: Optional[List[Tuple[Any, ...]]] = None
+            last_err: Optional[duckdb.Error] = None
             for attempt in range(max_retries):
                 try:
                     rows = con.execute(query).fetchall()
                     break
-                except Exception as e:
-                    last_err = e
+                except duckdb.Error as exc:
+                    last_err = exc
                     try:
                         con.close()
-                    except Exception:
+                    except duckdb.Error:
                         pass
                     gc.collect()
                     con = make_conn()  # rotate to a different exit IP on throttle
                     if attempt < max_retries - 1:
                         sleep_s = min(retry_backoff * (2 ** attempt), 300.0)
                         if progress:
-                            progress(f"part {i} read failed ({e}); "
+                            progress(f"part {i} read failed ({exc}); "
                                      f"retry {attempt + 1}/{max_retries - 1} in {sleep_s:.0f}s")
                         time.sleep(sleep_s)
             if rows is None:
@@ -277,7 +301,7 @@ def discover_by_countries(crawl: str, category_budgets: dict, tld_to_category: d
     return remaining
 
 
-def load_candidates(path: str):
+def load_candidates(path: str) -> Iterator[Candidate]:
     """Stream candidate records back out of a JSONL file written by discover_by_countries."""
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
@@ -286,7 +310,7 @@ def load_candidates(path: str):
                 yield json.loads(line)
 
 
-def load_candidates_shuffled(path: str, seed: int = 42):
+def load_candidates_shuffled(path: str, seed: int = 42) -> Iterator[Candidate]:
     """Like load_candidates, but interleaved randomly instead of in discovery order.
 
     Discovery writes results in contiguous per-ccTLD blocks (each country is filled
@@ -298,14 +322,14 @@ def load_candidates_shuffled(path: str, seed: int = 42):
     """
     import random
 
-    offsets = []
+    offsets: List[int] = []
     with open(path, "rb") as f:
         while True:
             pos = f.tell()
-            line = f.readline()
-            if not line:
+            raw_line = f.readline()
+            if not raw_line:
                 break
-            if line.strip():
+            if raw_line.strip():
                 offsets.append(pos)
 
     random.Random(seed).shuffle(offsets)
@@ -313,5 +337,5 @@ def load_candidates_shuffled(path: str, seed: int = 42):
     with open(path, "r", encoding="utf-8") as f:
         for pos in offsets:
             f.seek(pos)
-            line = f.readline()
-            yield json.loads(line)
+            text_line = f.readline()
+            yield json.loads(text_line)

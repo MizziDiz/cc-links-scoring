@@ -33,6 +33,9 @@ flowchart LR
 pip install -r requirements.txt
 ```
 
+Логи используют стандартный `logging`. Уровень по умолчанию — `INFO`; для
+диагностики запустите команду с `LOG_LEVEL=DEBUG`.
+
 Основная конфигурация запуска находится в
 [`run.config.json`](run.config.json). Она задаёт crawl, выходную SQLite-базу,
 категории, лимиты, источник WARC, число workers и параметры checkpoint.

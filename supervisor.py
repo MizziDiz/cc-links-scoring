@@ -9,8 +9,8 @@ Bans clear after a cooldown. This supervisor:
      it kills the fetch, waits for the ban to clear, and restarts.
 Runs until all candidates are processed. Fully resumable (--skip-discovery).
 """
-import subprocess
 import sqlite3
+import subprocess
 import sys
 import time
 

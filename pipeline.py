@@ -24,33 +24,65 @@ cc_links/exclusions.json.
 """
 import argparse
 import json
+import logging
+import sqlite3
 import sys
 import time
 import zlib
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor, FIRST_COMPLETED, wait
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from typing import Any, Dict, Iterator, Optional, Sequence, Set, Tuple
 
 from tqdm import tqdm
-from bs4 import BeautifulSoup
 
-from cc_links.cdx import get_cdx_records
 from cc_links import fetch as fetch_mod
-from cc_links.fetch import fetch_warc_record, parse_html_record, extract_links_from_html, domain_of, make_soup
-from cc_links.db import init_db, insert_page, insert_links
+from cc_links.cc_index import (
+    discover_by_countries,
+    load_candidates,
+    load_candidates_shuffled,
+    load_proxies,
+)
+from cc_links.cdx import get_cdx_records
+from cc_links.countries import allocate_budget, country_name, load_category_map, load_priorities
+from cc_links.db import init_db, insert_links, insert_page
 from cc_links.engines import classify_engine
-from cc_links.exclusions import load_excluded_domains, is_excluded
-from cc_links.countries import load_priorities, allocate_budget, country_name, load_category_map
-from cc_links.cc_index import discover_by_countries, load_candidates, load_candidates_shuffled, load_proxies
+from cc_links.exclusions import is_excluded, load_excluded_domains
+from cc_links.fetch import (
+    EXPECTED_FETCH_ERRORS,
+    NETWORK_EXCEPTIONS,
+    domain_of,
+    extract_links_from_html,
+    fetch_warc_record,
+    make_soup,
+    parse_html_record,
+)
+from cc_links.logging_config import configure_logging
+
+logger = logging.getLogger(__name__)
+Candidate = Dict[str, Any]
+PageResult = Dict[str, Any]
+Link = Tuple[str, str]
 
 
-def process_page(conn, crawl, url, filename, offset, length, excluded, tld=None, country=None, delay=0.0):
+def process_page(
+    conn: sqlite3.Connection,
+    crawl: str,
+    url: str,
+    filename: str,
+    offset: int,
+    length: int,
+    excluded: Set[str],
+    tld: Optional[str] = None,
+    country: Optional[str] = None,
+    delay: float = 0.0,
+) -> int:
     """Fetch one page's WARC record, classify its engine, and store page + outbound links.
     Used by the (single-threaded) `domains` mode."""
     try:
         raw = fetch_warc_record(filename, offset, length)
         html = parse_html_record(raw)
-    except Exception as e:
-        print(f"[fetch] skipping {url}: {e}", file=sys.stderr)
+    except EXPECTED_FETCH_ERRORS as exc:
+        logger.warning("[fetch] skipping %s: %s", url, exc)
         return 0
 
     if html is None:
@@ -71,26 +103,33 @@ def process_page(conn, crawl, url, filename, offset, length, excluded, tld=None,
     return len(links)
 
 
-def run_domains(domains, crawl, limit, db_path, delay, exclude_file):
+def run_domains(
+    domains: Sequence[str],
+    crawl: str,
+    limit: int,
+    db_path: str,
+    delay: float,
+    exclude_file: Optional[str],
+) -> None:
     excluded = load_excluded_domains(exclude_file)
     conn = init_db(db_path)
     total_links = 0
 
     for domain in domains:
         if is_excluded(domain, excluded):
-            print(f"[skip] {domain} is on the excluded global-platform list")
+            logger.info("[skip] %s is on the excluded global-platform list", domain)
             continue
 
         pattern = domain if "*" in domain else f"{domain}/*"
-        print(f"[cdx] querying {pattern} in {crawl} ...")
+        logger.info("[cdx] querying %s in %s ...", pattern, crawl)
         try:
             records = get_cdx_records(pattern, crawl, limit=limit)
-        except Exception as e:
-            print(f"[cdx] error for {domain}: {e}", file=sys.stderr)
+        except NETWORK_EXCEPTIONS as exc:
+            logger.error("[cdx] error for %s: %s", domain, exc)
             continue
 
         records = [r for r in records if r.get("status") == "200" and "html" in r.get("mime", "")]
-        print(f"[cdx] {len(records)} html pages found for {domain}")
+        logger.info("[cdx] %d html pages found for %s", len(records), domain)
 
         for r in tqdm(records, desc=domain):
             total_links += process_page(
@@ -98,11 +137,15 @@ def run_domains(domains, crawl, limit, db_path, delay, exclude_file):
                 excluded, delay=delay,
             )
 
-    print(f"Done. {total_links} links stored in {db_path}")
+    logger.info("Done. %d links stored in %s", total_links, db_path)
     conn.close()
 
 
-def _fetch_and_classify(record, excluded, extract_links=True):
+def _fetch_and_classify(
+    record: Candidate,
+    excluded: Set[str],
+    extract_links: bool = True,
+) -> PageResult:
     """Network + parsing only (thread-safe, no DB access) -- runs in worker threads.
 
     Wrapped end-to-end: a single malformed page anywhere in ~1.4M real-world
@@ -134,15 +177,35 @@ def _fetch_and_classify(record, excluded, extract_links=True):
             "tld": record.get("url_host_tld"), "bucket": record.get("bucket"),
             "category": category, "engine_name": engine_name, "links": links,
         }
-    except Exception as e:
-        return {"url": url, "ok": False, "error": f"{type(e).__name__}: {e}"}
+    except EXPECTED_FETCH_ERRORS as exc:
+        return {"url": url, "ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
-def run_countries(countries, crawl, total_limit, per_country_limit, priorities_file, db_path,
-                   workers, max_parts, exclude_file, candidates_file, commit_every, skip_discovery,
-                   rate_limit, max_per_domain, proxy, proxy_file, store_links,
-                   categories_file, per_category_limit, discovery_only, discover_delay, source,
-                   shard=None):
+def run_countries(
+    countries: Optional[Sequence[str]],
+    crawl: str,
+    total_limit: int,
+    per_country_limit: Optional[int],
+    priorities_file: Optional[str],
+    db_path: str,
+    workers: int,
+    max_parts: Optional[int],
+    exclude_file: Optional[str],
+    candidates_file: Optional[str],
+    commit_every: int,
+    skip_discovery: bool,
+    rate_limit: float,
+    max_per_domain: Optional[int],
+    proxy: Optional[str],
+    proxy_file: Optional[str],
+    store_links: bool,
+    categories_file: Optional[str],
+    per_category_limit: Optional[int],
+    discovery_only: bool,
+    discover_delay: float,
+    source: str,
+    shard: Optional[str] = None,
+) -> None:
     excluded = load_excluded_domains(exclude_file)
     candidates_file = candidates_file or (db_path + ".candidates.jsonl")
     fetch_mod.rate_limiter.set_rate(rate_limit)
@@ -152,15 +215,16 @@ def run_countries(countries, crawl, total_limit, per_country_limit, priorities_f
         # from S3 (no CloudFront per-IP throttle, no proxies). Requires an EC2 role
         # that can read S3. Discovery still uses the CloudFront/parquet path.
         fetch_mod.enable_s3(pool_size=max(workers * 2, 64))
-        print(f"[source] fetching WARC records from s3://commoncrawl (signed, no rate limit)")
+        logger.info("[source] fetching WARC records from s3://commoncrawl (signed, no rate limit)")
     elif proxy_file:
         n = fetch_mod.load_proxy_file(proxy_file)
         discovery_proxies = load_proxies(proxy_file)  # rotate index reads across IPs too
-        print(f"[proxy] rotating across {n} proxies from {proxy_file}")
+        logger.info("[proxy] rotating across %d proxies from %s", n, proxy_file)
         fetch_mod.start_proxy_refresher(proxy_file)  # hot-reload as an external harvester tops it up
     elif proxy:
         fetch_mod.set_proxy(proxy)
-        print(f"[proxy] routing fetches through {proxy.split('@')[-1] if '@' in proxy else proxy}")
+        endpoint = proxy.split("@")[-1] if "@" in proxy else proxy
+        logger.info("[proxy] routing fetches through %s", endpoint)
 
     # Budgets are keyed by "category". A category may be a single ccTLD (plain
     # per-country run) or a named bucket spanning several ccTLDs that share one
@@ -174,19 +238,20 @@ def run_countries(countries, crawl, total_limit, per_country_limit, priorities_f
             budgets = allocate_budget({name: 1.0 for name in categories}, total_limit)
         is_tld_label = False
     else:
-        tld_to_category = {t: t for t in countries}
+        selected_countries = list(countries or [])
+        tld_to_category = {t: t for t in selected_countries}
         if per_country_limit:
-            budgets = {t: per_country_limit for t in countries}
+            budgets = {t: per_country_limit for t in selected_countries}
         else:
-            priorities = load_priorities(priorities_file, countries=countries)
-            priorities = {t: w for t, w in priorities.items() if t in countries}
+            priorities = load_priorities(priorities_file, countries=selected_countries)
+            priorities = {t: w for t, w in priorities.items() if t in selected_countries}
             budgets = allocate_budget(priorities, total_limit)
         is_tld_label = True
-    print(f"[budget] {budgets}")
+    logger.info("[budget] %s", budgets)
 
     if not skip_discovery:
-        def progress(msg):
-            print(f"[discover] {msg}")
+        def progress(msg: str) -> None:
+            logger.info("[discover] %s", msg)
 
         shortfall = discover_by_countries(
             crawl, budgets, tld_to_category, lambda d: is_excluded(d, excluded),
@@ -196,26 +261,30 @@ def run_countries(countries, crawl, total_limit, per_country_limit, priorities_f
         for name, remaining in shortfall.items():
             if remaining > 0:
                 label = f"{name} ({country_name(name)})" if is_tld_label else name
-                print(f"[discover] WARNING: {label} short by {remaining} pages "
-                      f"-- crawl may not have enough matching pages, or increase --max-parts")
+                logger.warning(
+                    "[discover] %s short by %d pages -- crawl may not have enough "
+                    "matching pages, or increase --max-parts",
+                    label,
+                    remaining,
+                )
     else:
-        print(f"[discover] skipped, reusing {candidates_file}")
+        logger.info("[discover] skipped, reusing %s", candidates_file)
 
     if discovery_only:
-        from collections import Counter as _Counter
-        by_bucket = _Counter()
+        by_bucket: Counter[str] = Counter()
         for rec in load_candidates(candidates_file):
-            by_bucket[rec.get("bucket", rec.get("url_host_tld"))] += 1
+            bucket = str(rec.get("bucket", rec.get("url_host_tld", "")))
+            by_bucket[bucket] += 1
         total = sum(by_bucket.values())
-        print(f"[discovery-only] {total} candidates in {candidates_file}:")
+        logger.info("[discovery-only] %d candidates in %s:", total, candidates_file)
         for name, n in sorted(by_bucket.items(), key=lambda kv: -kv[1]):
-            print(f"   {n:>7}  {name}")
-        print(f"[discovery-only] done -- rerun with --skip-discovery to fetch")
+            logger.info("%7d  %s", n, name)
+        logger.info("[discovery-only] done -- rerun with --skip-discovery to fetch")
         return
 
     conn = init_db(db_path)
     already = {row[0] for row in conn.execute("SELECT url FROM pages")}
-    print(f"[resume] {len(already)} pages already stored, will be skipped")
+    logger.info("[resume] %d pages already stored, will be skipped", len(already))
 
     # --shard i/N: run N processes in parallel (one per CPU core, each to its own
     # --db) over disjoint slices of the candidates, split by a stable hash of the
@@ -224,9 +293,9 @@ def run_countries(countries, crawl, total_limit, per_country_limit, priorities_f
     shard_i = shard_n = None
     if shard:
         shard_i, shard_n = (int(x) for x in shard.split("/"))
-        print(f"[shard] this process handles slice {shard_i} of {shard_n}")
+        logger.info("[shard] this process handles slice %d of %d", shard_i, shard_n)
 
-    def candidate_iter():
+    def candidate_iter() -> Iterator[Candidate]:
         # Shuffled so a rate-limit block mid-run loses a random slice of every
         # country instead of wiping out whichever ccTLDs hadn't been reached yet
         # (discovery writes results in contiguous per-ccTLD blocks).
@@ -244,13 +313,13 @@ def run_countries(countries, crawl, total_limit, per_country_limit, priorities_f
     total_links = 0
     processed = 0
     consecutive_failures = 0
-    error_counts = Counter()
+    error_counts: Counter[str] = Counter()
 
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        pending = set()
+        pending: Set[Future[PageResult]] = set()
         it = candidate_iter()
 
-        def fill():
+        def fill() -> None:
             for rec in it:
                 pending.add(ex.submit(_fetch_and_classify, rec, excluded, store_links))
                 if len(pending) >= workers * 4:
@@ -287,9 +356,14 @@ def run_countries(countries, crawl, total_limit, per_country_limit, priorities_f
                 if consecutive_failures >= workers * 3:
                     current_rate = 1.0 / fetch_mod.rate_limiter.min_interval
                     new_rate = max(current_rate / 2, 1.0)
-                    print(f"\n[throttle] {consecutive_failures} failures in a row "
-                          f"({dict(error_counts.most_common(3))}); pausing 90s and cutting rate "
-                          f"{current_rate:.1f} -> {new_rate:.1f} req/s")
+                    logger.warning(
+                        "[throttle] %d failures in a row (%s); pausing 90s and cutting "
+                        "rate %.1f -> %.1f req/s",
+                        consecutive_failures,
+                        dict(error_counts.most_common(3)),
+                        current_rate,
+                        new_rate,
+                    )
                     time.sleep(90)
                     fetch_mod.rate_limiter.set_rate(new_rate)
                     consecutive_failures = 0
@@ -298,15 +372,20 @@ def run_countries(countries, crawl, total_limit, per_country_limit, priorities_f
 
     conn.commit()
     if error_counts:
-        print(f"[errors] {sum(error_counts.values())} failed fetches:")
+        logger.error("[errors] %d failed fetches:", sum(error_counts.values()))
         for err, count in error_counts.most_common(10):
-            print(f"   {count:>6}  {err}")
-    links_msg = f"{total_links} links stored" if store_links else f"{total_links} links counted (not stored, --no-links)"
-    print(f"Done. {links_msg} in {db_path}")
+            logger.error("%6d  %s", count, err)
+    links_msg = (
+        f"{total_links} links stored"
+        if store_links
+        else f"{total_links} links counted (not stored, --no-links)"
+    )
+    logger.info("Done. %s in %s", links_msg, db_path)
     conn.close()
 
 
-def main():
+def main() -> None:
+    configure_logging()
     parser = argparse.ArgumentParser(description="Collect and classify links from Common Crawl without Athena.")
     sub = parser.add_subparsers(dest="mode", required=True)
 
