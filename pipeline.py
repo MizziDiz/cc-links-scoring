@@ -23,6 +23,7 @@ excluded from both crawling and outbound-link storage -- see
 cc_links/exclusions.json.
 """
 import argparse
+import asyncio
 import json
 import logging
 import os
@@ -56,6 +57,7 @@ from cc_links.fetch import (
     parse_html_record,
 )
 from cc_links.logging_config import configure_logging
+from cc_links.processing import classify_warc_bytes
 from cc_links.storage import PageRecord, Storage, create_storage
 
 logger = logging.getLogger(__name__)
@@ -172,26 +174,9 @@ def _fetch_and_classify(
     url = record["url"]
     try:
         raw = fetch_warc_record(record["filename"], record["offset"], record["length"])
-        html = parse_html_record(raw)
-        if html is None:
-            return {"url": url, "ok": False, "error": "no-html-record"}
-
-        category, engine_name, _signal = classify_engine(html, url)
-        if extract_links:
-            # Only build the DOM when we actually need the <a href> graph.
-            soup = make_soup(html)
-            links = extract_links_from_html(html, url, soup=soup)
-            links = [(t, a) for t, a in links if not is_excluded(domain_of(t), excluded)]
-        else:
-            links = []
-
-        return {
-            "url": url, "ok": True,
-            "tld": record.get("url_host_tld"), "bucket": record.get("bucket"),
-            "category": category, "engine_name": engine_name, "links": links,
-        }
     except EXPECTED_FETCH_ERRORS as exc:
         return {"url": url, "ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    return classify_warc_bytes(record, raw, excluded, extract_links)
 
 
 def run_countries(
@@ -219,7 +204,20 @@ def run_countries(
     source: str,
     shard: Optional[str] = None,
     db_backend: str = "sqlite",
+    fetch_mode: str = "threads",
+    cpu_workers: Optional[int] = None,
 ) -> None:
+    if fetch_mode not in {"threads", "async"}:
+        raise ValueError("fetch_mode must be threads or async")
+    if workers < 1:
+        raise ValueError("workers must be positive")
+    if cpu_workers is not None and cpu_workers < 1:
+        raise ValueError("cpu_workers must be positive")
+    if fetch_mode == "async" and source == "s3":
+        raise ValueError("async fetch mode supports CloudFront/gateway, not signed S3")
+    if fetch_mode == "async" and proxy_file:
+        raise ValueError("async fetch mode supports a single --proxy gateway, not --proxy-file")
+
     excluded = load_excluded_domains(exclude_file)
     candidates_file = candidates_file or (db_path + ".candidates.jsonl")
     fetch_mod.rate_limiter.set_rate(rate_limit)
@@ -237,7 +235,8 @@ def run_countries(
         logger.info("[proxy] rotating across %d proxies from %s", n, proxy_file)
         fetch_mod.start_proxy_refresher(proxy_file)  # hot-reload as an external harvester tops it up
     elif proxy:
-        fetch_mod.set_proxy(proxy)
+        if fetch_mode == "threads":
+            fetch_mod.set_proxy(proxy)
         endpoint = proxy.split("@")[-1] if "@" in proxy else proxy
         logger.info("[proxy] routing fetches through %s", endpoint)
 
@@ -330,72 +329,124 @@ def run_countries(
     consecutive_failures = 0
     error_counts: Counter[str] = Counter()
 
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        pending: Set[Future[PageResult]] = set()
-        it = candidate_iter()
+    def record_result(res: PageResult, pbar: Any) -> None:
+        nonlocal total_links, processed, consecutive_failures
+        if res["ok"]:
+            consecutive_failures = 0
+            cname = country_name(res["tld"])
+            storage.save_pages(
+                [
+                    PageRecord(
+                        url=res["url"],
+                        domain=domain_of(res["url"]),
+                        crawl=crawl,
+                        timestamp="",
+                        tld=res["tld"],
+                        country=cname,
+                        bucket=res.get("bucket"),
+                        engine_category=res["category"],
+                        engine_name=res["engine_name"],
+                        outlink_count=len(res["links"]),
+                    )
+                ]
+            )
+            if store_links:
+                storage.save_links(res["url"], res["links"])
+            total_links += len(res["links"])
+        else:
+            consecutive_failures += 1
+            error_counts[res["error"]] += 1
+        processed += 1
+        pbar.update(1)
+        if processed % commit_every == 0:
+            storage.commit()
 
-        def fill() -> None:
-            for rec in it:
-                pending.add(ex.submit(_fetch_and_classify, rec, excluded, store_links))
-                if len(pending) >= workers * 4:
-                    break
+    if fetch_mode == "threads":
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            pending: Set[Future[PageResult]] = set()
+            it = candidate_iter()
 
-        fill()
-        with tqdm(total=total_count, initial=len(already)) as pbar:
-            while pending:
-                done, pending = wait(pending, return_when=FIRST_COMPLETED)
-                for fut in done:
-                    res = fut.result()
-                    if res["ok"]:
-                        consecutive_failures = 0
-                        cname = country_name(res["tld"])
-                        storage.save_pages(
-                            [
-                                PageRecord(
-                                    url=res["url"],
-                                    domain=domain_of(res["url"]),
-                                    crawl=crawl,
-                                    timestamp="",
-                                    tld=res["tld"],
-                                    country=cname,
-                                    bucket=res.get("bucket"),
-                                    engine_category=res["category"],
-                                    engine_name=res["engine_name"],
-                                    outlink_count=len(res["links"]),
-                                )
-                            ]
+            def fill() -> None:
+                for rec in it:
+                    pending.add(ex.submit(_fetch_and_classify, rec, excluded, store_links))
+                    if len(pending) >= workers * 4:
+                        break
+
+            fill()
+            with tqdm(total=total_count, initial=len(already)) as pbar:
+                while pending:
+                    done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                    for fut in done:
+                        record_result(fut.result(), pbar)
+
+                    # Circuit breaker: a long unbroken streak of failures across the whole
+                    # pool means we're likely being throttled (e.g. CloudFront 403s) --
+                    # pause and back off the global rate rather than burning through the
+                    # remaining candidates at a 100% failure rate.
+                    if consecutive_failures >= workers * 3:
+                        current_rate = 1.0 / fetch_mod.rate_limiter.min_interval
+                        new_rate = max(current_rate / 2, 1.0)
+                        logger.warning(
+                            "[throttle] %d failures in a row (%s); pausing 90s and cutting "
+                            "rate %.1f -> %.1f req/s",
+                            consecutive_failures,
+                            dict(error_counts.most_common(3)),
+                            current_rate,
+                            new_rate,
                         )
-                        if store_links:
-                            storage.save_links(res["url"], res["links"])
-                        total_links += len(res["links"])
-                    else:
-                        consecutive_failures += 1
-                        error_counts[res["error"]] += 1
-                    processed += 1
-                    pbar.update(1)
-                    if processed % commit_every == 0:
-                        storage.commit()
+                        time.sleep(90)
+                        fetch_mod.rate_limiter.set_rate(new_rate)
+                        consecutive_failures = 0
 
-                # Circuit breaker: a long unbroken streak of failures across the whole
-                # pool means we're likely being throttled (e.g. CloudFront 403s) --
-                # pause and back off the global rate rather than burning through the
-                # remaining candidates at a 100% failure rate.
-                if consecutive_failures >= workers * 3:
-                    current_rate = 1.0 / fetch_mod.rate_limiter.min_interval
-                    new_rate = max(current_rate / 2, 1.0)
+                    fill()
+    else:
+        from cc_links.async_fetch import AsyncFetchSettings, run_async_fetch
+
+        process_count = cpu_workers or min(max(os.cpu_count() or 1, 1), workers)
+        logger.info(
+            "[fetch] async I/O concurrency=%d, CPU processes=%d",
+            workers,
+            process_count,
+        )
+
+        async def run_async_mode() -> None:
+            async_rate = rate_limit
+            with tqdm(total=total_count, initial=len(already)) as pbar:
+
+                async def on_result(
+                    result: PageResult,
+                ) -> Optional[Tuple[float, float]]:
+                    nonlocal consecutive_failures, async_rate
+                    record_result(result, pbar)
+                    if consecutive_failures < workers * 3:
+                        return None
+                    new_rate = max(async_rate / 2, 1.0)
                     logger.warning(
                         "[throttle] %d failures in a row (%s); pausing 90s and cutting "
-                        "rate %.1f -> %.1f req/s",
+                        "async rate %.1f -> %.1f req/s",
                         consecutive_failures,
                         dict(error_counts.most_common(3)),
-                        current_rate,
+                        async_rate,
                         new_rate,
                     )
-                    time.sleep(90)
-                    fetch_mod.rate_limiter.set_rate(new_rate)
                     consecutive_failures = 0
+                    async_rate = new_rate
+                    return 90.0, new_rate
 
-                fill()
+                await run_async_fetch(
+                    candidate_iter(),
+                    excluded,
+                    store_links,
+                    AsyncFetchSettings(
+                        concurrency=workers,
+                        rate_limit=rate_limit,
+                    ),
+                    process_count,
+                    on_result,
+                    proxy=proxy,
+                )
+
+        asyncio.run(run_async_mode())
 
     storage.commit()
     if error_counts:
@@ -453,6 +504,20 @@ def main() -> None:
         help="Storage backend (default: DB_BACKEND or sqlite)",
     )
     p_countries.add_argument("--workers", type=int, default=20, help="Concurrent fetch workers")
+    p_countries.add_argument(
+        "--fetch-mode",
+        choices=["threads", "async"],
+        default="threads",
+        help="Fetch implementation: existing threads path (default) or aiohttp I/O "
+             "with process workers for WARC parsing/classification",
+    )
+    p_countries.add_argument(
+        "--cpu-workers",
+        type=int,
+        default=None,
+        help="CPU processes used by --fetch-mode async "
+             "(default: min(detected CPU count, --workers))",
+    )
     p_countries.add_argument("--rate-limit", type=float, default=15,
                               help="Max requests/sec to data.commoncrawl.org across all workers "
                                    "(observed 403 throttling above ~90/s; auto-halves on sustained failures)")
@@ -539,7 +604,8 @@ def main() -> None:
                        args.candidates_file, args.commit_every, args.skip_discovery, args.rate_limit,
                        args.max_per_domain, args.proxy, args.proxy_file, not args.no_links,
                        args.categories_file, args.per_category_limit, args.discovery_only,
-                       args.discover_delay, args.source, args.shard, args.db_backend)
+                       args.discover_delay, args.source, args.shard, args.db_backend,
+                       args.fetch_mode, args.cpu_workers)
 
 
 if __name__ == "__main__":
