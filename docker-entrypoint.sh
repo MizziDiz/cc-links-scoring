@@ -70,6 +70,15 @@ fi
 if [ -n "${PIPELINE_SHARD:-}" ]; then
     set -- "$@" --shard "$PIPELINE_SHARD"
 fi
+if [ -n "${DB_BACKEND:-}" ]; then
+    case "$DB_BACKEND" in
+        sqlite | mysql) set -- "$@" --db-backend "$DB_BACKEND" ;;
+        *)
+            echo "DB_BACKEND must be sqlite or mysql" >&2
+            exit 2
+            ;;
+    esac
+fi
 
 case "${PIPELINE_SOURCE:-cloudfront}" in
     cloudfront | s3)

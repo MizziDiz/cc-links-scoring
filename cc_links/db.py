@@ -1,37 +1,10 @@
-"""SQLite storage layer -- stands in for the Athena table/queries."""
+"""Compatibility helpers for scripts that explicitly operate on SQLite files."""
 import sqlite3
 from typing import Iterable, Optional, Tuple
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS pages (
-    url TEXT PRIMARY KEY,
-    domain TEXT,
-    crawl TEXT,
-    timestamp TEXT,
-    tld TEXT,
-    country TEXT,
-    bucket TEXT,
-    engine_category TEXT,
-    engine_name TEXT,
-    outlink_count INTEGER,
-    fetched_at TEXT DEFAULT CURRENT_TIMESTAMP
-);
+from cc_links.storage import SQLITE_SCHEMA
 
-CREATE TABLE IF NOT EXISTS links (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    source_url TEXT NOT NULL,
-    target_url TEXT NOT NULL,
-    target_domain TEXT,
-    anchor_text TEXT,
-    FOREIGN KEY (source_url) REFERENCES pages(url)
-);
-
-CREATE INDEX IF NOT EXISTS idx_links_source ON links(source_url);
-CREATE INDEX IF NOT EXISTS idx_links_target_domain ON links(target_domain);
-CREATE INDEX IF NOT EXISTS idx_pages_engine ON pages(engine_category);
-CREATE INDEX IF NOT EXISTS idx_pages_country ON pages(country);
-CREATE INDEX IF NOT EXISTS idx_pages_bucket ON pages(bucket);
-"""
+SCHEMA = SQLITE_SCHEMA
 
 
 def init_db(path: str) -> sqlite3.Connection:

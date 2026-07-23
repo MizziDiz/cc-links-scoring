@@ -26,7 +26,6 @@ import argparse
 import json
 import logging
 import os
-import sqlite3
 import sys
 import time
 import zlib
@@ -45,7 +44,6 @@ from cc_links.cc_index import (
 )
 from cc_links.cdx import get_cdx_records
 from cc_links.countries import allocate_budget, country_name, load_category_map, load_priorities
-from cc_links.db import init_db, insert_links, insert_page
 from cc_links.engines import classify_engine
 from cc_links.exclusions import is_excluded, load_excluded_domains
 from cc_links.fetch import (
@@ -58,6 +56,7 @@ from cc_links.fetch import (
     parse_html_record,
 )
 from cc_links.logging_config import configure_logging
+from cc_links.storage import PageRecord, Storage, create_storage
 
 logger = logging.getLogger(__name__)
 Candidate = Dict[str, Any]
@@ -66,7 +65,7 @@ Link = Tuple[str, str]
 
 
 def process_page(
-    conn: sqlite3.Connection,
+    storage: Storage,
     crawl: str,
     url: str,
     filename: str,
@@ -94,10 +93,22 @@ def process_page(
     links = extract_links_from_html(html, url, soup=soup)
     links = [(t, a) for t, a in links if not is_excluded(domain_of(t), excluded)]
 
-    insert_page(conn, url, domain_of(url), crawl, "", tld=tld, country=country,
-                engine_category=category, engine_name=engine_name)
-    insert_links(conn, url, links)
-    conn.commit()
+    storage.save_pages(
+        [
+            PageRecord(
+                url=url,
+                domain=domain_of(url),
+                crawl=crawl,
+                timestamp="",
+                tld=tld,
+                country=country,
+                engine_category=category,
+                engine_name=engine_name,
+            )
+        ]
+    )
+    storage.save_links(url, links)
+    storage.commit()
 
     if delay:
         time.sleep(delay)
@@ -111,9 +122,10 @@ def run_domains(
     db_path: str,
     delay: float,
     exclude_file: Optional[str],
+    db_backend: str = "sqlite",
 ) -> None:
     excluded = load_excluded_domains(exclude_file)
-    conn = init_db(db_path)
+    storage = create_storage(db_path, db_backend)
     total_links = 0
 
     for domain in domains:
@@ -134,12 +146,12 @@ def run_domains(
 
         for r in tqdm(records, desc=domain):
             total_links += process_page(
-                conn, crawl, r["url"], r["filename"], r["offset"], r["length"],
+                storage, crawl, r["url"], r["filename"], r["offset"], r["length"],
                 excluded, delay=delay,
             )
 
     logger.info("Done. %d links stored in %s", total_links, db_path)
-    conn.close()
+    storage.close()
 
 
 def _fetch_and_classify(
@@ -206,6 +218,7 @@ def run_countries(
     discover_delay: float,
     source: str,
     shard: Optional[str] = None,
+    db_backend: str = "sqlite",
 ) -> None:
     excluded = load_excluded_domains(exclude_file)
     candidates_file = candidates_file or (db_path + ".candidates.jsonl")
@@ -284,8 +297,8 @@ def run_countries(
         logger.info("[discovery-only] done -- rerun with --skip-discovery to fetch")
         return
 
-    conn = init_db(db_path)
-    already = {row[0] for row in conn.execute("SELECT url FROM pages")}
+    storage = create_storage(db_path, db_backend)
+    already = {row[0] for row in storage.query("SELECT url FROM pages").rows}
     logger.info("[resume] %d pages already stored, will be skipped", len(already))
 
     # --shard i/N: run N processes in parallel (one per CPU core, each to its own
@@ -336,12 +349,24 @@ def run_countries(
                     if res["ok"]:
                         consecutive_failures = 0
                         cname = country_name(res["tld"])
-                        insert_page(conn, res["url"], domain_of(res["url"]), crawl, "",
-                                    tld=res["tld"], country=cname, bucket=res.get("bucket"),
-                                    engine_category=res["category"], engine_name=res["engine_name"],
-                                    outlink_count=len(res["links"]))
+                        storage.save_pages(
+                            [
+                                PageRecord(
+                                    url=res["url"],
+                                    domain=domain_of(res["url"]),
+                                    crawl=crawl,
+                                    timestamp="",
+                                    tld=res["tld"],
+                                    country=cname,
+                                    bucket=res.get("bucket"),
+                                    engine_category=res["category"],
+                                    engine_name=res["engine_name"],
+                                    outlink_count=len(res["links"]),
+                                )
+                            ]
+                        )
                         if store_links:
-                            insert_links(conn, res["url"], res["links"])
+                            storage.save_links(res["url"], res["links"])
                         total_links += len(res["links"])
                     else:
                         consecutive_failures += 1
@@ -349,7 +374,7 @@ def run_countries(
                     processed += 1
                     pbar.update(1)
                     if processed % commit_every == 0:
-                        conn.commit()
+                        storage.commit()
 
                 # Circuit breaker: a long unbroken streak of failures across the whole
                 # pool means we're likely being throttled (e.g. CloudFront 403s) --
@@ -372,7 +397,7 @@ def run_countries(
 
                 fill()
 
-    conn.commit()
+    storage.commit()
     if error_counts:
         logger.error("[errors] %d failed fetches:", sum(error_counts.values()))
         for err, count in error_counts.most_common(10):
@@ -383,7 +408,7 @@ def run_countries(
         else f"{total_links} links counted (not stored, --no-links)"
     )
     logger.info("Done. %s in %s", links_msg, db_path)
-    conn.close()
+    storage.close()
 
 
 def main() -> None:
@@ -398,6 +423,12 @@ def main() -> None:
     p_domains.add_argument("--db", default="links.db")
     p_domains.add_argument("--delay", type=float, default=0.2)
     p_domains.add_argument("--exclude-file", help="Extra exclusions JSON (adds to cc_links/exclusions.json)")
+    p_domains.add_argument(
+        "--db-backend",
+        choices=["sqlite", "mysql"],
+        default=os.getenv("DB_BACKEND", "sqlite"),
+        help="Storage backend (default: DB_BACKEND or sqlite)",
+    )
 
     p_countries = sub.add_parser("countries", help="Discover pages across ccTLDs via the Parquet cc-index (DuckDB)")
     p_countries.add_argument("--countries", nargs="+", help="ccTLDs, e.g. co cl pe ec uy mx ar "
@@ -415,6 +446,12 @@ def main() -> None:
                               help="Flat budget per ccTLD, e.g. 200000 -- overrides --total-limit/--priorities")
     p_countries.add_argument("--priorities", help="JSON file: {\"ru\": 3, \"de\": 1, ...} priority weights")
     p_countries.add_argument("--db", default="links.db")
+    p_countries.add_argument(
+        "--db-backend",
+        choices=["sqlite", "mysql"],
+        default=os.getenv("DB_BACKEND", "sqlite"),
+        help="Storage backend (default: DB_BACKEND or sqlite)",
+    )
     p_countries.add_argument("--workers", type=int, default=20, help="Concurrent fetch workers")
     p_countries.add_argument("--rate-limit", type=float, default=15,
                               help="Max requests/sec to data.commoncrawl.org across all workers "
@@ -437,7 +474,12 @@ def main() -> None:
                               help="Cap on Parquet index parts scanned (default: all ~300, needed for large budgets)")
     p_countries.add_argument("--exclude-file", help="Extra exclusions JSON (adds to cc_links/exclusions.json)")
     p_countries.add_argument("--candidates-file", help="JSONL discovery checkpoint (default: <db>.candidates.jsonl)")
-    p_countries.add_argument("--commit-every", type=int, default=200, help="SQLite commit interval (# pages)")
+    p_countries.add_argument(
+        "--commit-every",
+        type=int,
+        default=200,
+        help="Storage commit interval (# pages)",
+    )
     p_countries.add_argument("--skip-discovery", action="store_true",
                               help="Reuse an existing candidates file instead of re-scanning the index")
     p_countries.add_argument("--discovery-only", action="store_true",
@@ -480,7 +522,15 @@ def main() -> None:
             setattr(args, key, val)
 
     if args.mode == "domains":
-        run_domains(args.domains, args.crawl, args.limit, args.db, args.delay, args.exclude_file)
+        run_domains(
+            args.domains,
+            args.crawl,
+            args.limit,
+            args.db,
+            args.delay,
+            args.exclude_file,
+            args.db_backend,
+        )
     elif args.mode == "countries":
         if bool(args.countries) == bool(args.categories_file):
             parser.error("provide exactly one of --countries or --categories-file")
@@ -489,7 +539,7 @@ def main() -> None:
                        args.candidates_file, args.commit_every, args.skip_discovery, args.rate_limit,
                        args.max_per_domain, args.proxy, args.proxy_file, not args.no_links,
                        args.categories_file, args.per_category_limit, args.discovery_only,
-                       args.discover_delay, args.source, args.shard)
+                       args.discover_delay, args.source, args.shard, args.db_backend)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""Analyze collected links using local SQLite (replaces Athena SQL queries).
+"""Analyze collected links through the configured storage backend.
 
 Usage:
   python analyze.py --db links.db --report top-domains
@@ -7,10 +7,11 @@ Usage:
 """
 import argparse
 import logging
-import sqlite3
+import os
 from typing import Dict
 
 from cc_links.logging_config import configure_logging
+from cc_links.storage import QueryResult, create_storage
 
 logger = logging.getLogger(__name__)
 
@@ -143,21 +144,33 @@ REPORTS: Dict[str, str] = {
     """,
 }
 
+MYSQL_REPORT_OVERRIDES: Dict[str, str] = {
+    "external-vs-internal": REPORTS["external-vs-internal"].replace(
+        "p.url = l.source_url",
+        "p.url_hash = l.source_url_hash",
+    )
+}
 
-def print_table(cursor: sqlite3.Cursor) -> None:
-    cols = [d[0] for d in cursor.description]
-    rows = cursor.fetchall()
-    logger.info(" | ".join(cols))
-    logger.info("-" * (len(" | ".join(cols))))
-    for row in rows:
+
+def print_table(result: QueryResult) -> None:
+    header = " | ".join(result.columns)
+    logger.info(header)
+    logger.info("-" * len(header))
+    for row in result.rows:
         logger.info(" | ".join(str(v) for v in row))
-    logger.info("(%d rows)", len(rows))
+    logger.info("(%d rows)", len(result.rows))
 
 
 def main() -> None:
     configure_logging()
     parser = argparse.ArgumentParser(description="Analyze the collected Common Crawl link data.")
-    parser.add_argument("--db", default="links.db", help="SQLite database path")
+    parser.add_argument("--db", default="links.db", help="SQLite path (ignored for MySQL)")
+    parser.add_argument(
+        "--db-backend",
+        choices=["sqlite", "mysql"],
+        default=os.getenv("DB_BACKEND", "sqlite"),
+        help="Storage backend (default: DB_BACKEND or sqlite)",
+    )
     parser.add_argument("--report", choices=list(REPORTS.keys()), help="Run a canned report")
     parser.add_argument("--sql", help="Run a custom SQL query instead")
     args = parser.parse_args()
@@ -165,11 +178,17 @@ def main() -> None:
     if not args.report and not args.sql:
         parser.error("Specify --report <name> or --sql \"<query>\"")
 
-    conn = sqlite3.connect(args.db)
-    query = args.sql if args.sql else REPORTS[args.report]
-    cursor = conn.execute(query)
-    print_table(cursor)
-    conn.close()
+    storage = create_storage(args.db, args.db_backend)
+    try:
+        if args.sql:
+            query = args.sql
+        elif args.db_backend == "mysql":
+            query = MYSQL_REPORT_OVERRIDES.get(args.report, REPORTS[args.report])
+        else:
+            query = REPORTS[args.report]
+        print_table(storage.query(query))
+    finally:
+        storage.close()
 
 
 if __name__ == "__main__":

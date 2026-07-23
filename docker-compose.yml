@@ -15,4 +15,30 @@ services:
         source: ${CANDIDATES_HOST_DIR:-./data/candidates}
         target: /data/candidates
 
-  # опциональный сервис mysql добавляется отдельным PR
+  mysql:
+    image: mysql:8.4
+    profiles:
+      - mysql
+    env_file:
+      - .env
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-cc_links}
+      MYSQL_USER: ${MYSQL_USER:-cc_links}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - MYSQL_PWD="$${MYSQL_ROOT_PASSWORD}" mysqladmin ping -h localhost -u root --silent
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql/init/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
+
+volumes:
+  mysql_data:
