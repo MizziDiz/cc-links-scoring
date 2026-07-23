@@ -9,6 +9,14 @@ __pycache__/
 
 # Real proxy credentials -- never commit
 proxies.txt
+data/ops/
+harvest_runner.py
+.env
+.env.*
+!.env.example
+*credentials*.txt
+*secrets*.txt
+*tokens*.txt
 
 # Run logs
 *.log

@@ -1,65 +1,211 @@
-# cc-links — сбор и анализ ссылок из Common Crawl без Athena
+# cc-links — технический обзор
 
-## Установка
+Пайплайн исследует Common Crawl без Athena: находит страницы через колоночный
+`cc-index`, забирает только нужные WARC-фрагменты, определяет движок сайта и
+сохраняет результат в SQLite для аналитики и дашборда.
 
+```mermaid
+flowchart LR
+    CF["CloudFront / HTTPS"]
+    GW["Ротирующий шлюз"]
+    S3["S3 + EC2<br/>IAM instance profile"]
+
+    D["Discovery<br/>DuckDB + httpfs<br/>cc-index Parquet"]
+    F["Fetch<br/>Range-запросы<br/>WARC offset + length"]
+    C["Classify<br/>61 движок<br/>regex по head + raw HTML/URL"]
+    DB["SQLite<br/>latam.db"]
+    DASH["Dashboard<br/>dashboard_data.json"]
+
+    CF --> D
+    GW --> D
+    S3 --> D
+    D --> F
+    F --> C
+    C --> DB
+    DB --> DASH
 ```
+
+## Quickstart
+
+Установка:
+
+```bash
 pip install -r requirements.txt
 ```
 
-## Сбор данных
+Основная конфигурация запуска находится в
+[`run.config.json`](run.config.json). Она задаёт crawl, выходную SQLite-базу,
+категории, лимиты, источник WARC, число workers и параметры checkpoint.
+Состав географических групп хранится в [`categories.json`](categories.json),
+исключения — в [`cc_links/exclusions.json`](cc_links/exclusions.json).
+Любое значение из конфигурации можно переопределить одноимённым CLI-флагом.
 
-### Режим 1: конкретные домены (через CDX Index API)
+### 1. Discovery
 
+Команда сканирует Parquet-индекс и сохраняет найденные URL вместе с
+`filename`, `offset` и `length` WARC-записи. HTML на этом этапе не скачивается.
+
+```bash
+python pipeline.py countries \
+    --config run.config.json \
+    --discovery-only
 ```
-python pipeline.py domains --domains example.com another.org --crawl CC-MAIN-2026-25 --limit 50 --db links.db
+
+Checkpoint по умолчанию записывается рядом с базой:
+`<db>.candidates.jsonl` и `<db>.candidates.jsonl.state.json`. Повторный запуск
+продолжает сканирование с сохранённого состояния.
+
+### 2. Fetch и классификация
+
+Команда повторно использует готовый discovery-checkpoint, выполняет
+range-запросы WARC-фрагментов, классифицирует страницы и пишет результат в
+SQLite:
+
+```bash
+python pipeline.py countries \
+    --config run.config.json \
+    --skip-discovery
 ```
 
-- `--crawl` — id индекса Common Crawl (список актуальных: https://index.commoncrawl.org/collinfo.json)
-- `--limit` — сколько страниц на домен забирать
-- `--exclude-file` — свой JSON с доменами, которые нужно исключить дополнительно (см. ниже)
+CLI-дефолт остаётся `cloudfront`; в `run.config.json` основной EC2-путь явно
+выбирает `"source": "s3"`. Вне AWS используется CloudFront:
 
-### Режим 2: поиск по странам (ccTLD) с приоритетами, без Athena
-
+```bash
+python pipeline.py countries \
+    --config run.config.json \
+    --skip-discovery \
+    --source cloudfront
 ```
-python pipeline.py countries --countries ru de fr --total-limit 300 \
-    --priorities priorities.example.json --max-parts 40 --crawl CC-MAIN-2026-25 --db links.db
+
+Для ротирующего шлюза используются `--proxy` или `--proxy-file`. Реальные
+адреса и credentials должны находиться только в gitignored-файлах и не
+передаваться в коммиты.
+
+### 3. Горизонтальный fetch
+
+Discovery выполняется один раз. После него один JSONL можно обработать
+несколькими независимыми процессами:
+
+```bash
+python pipeline.py countries --config run.config.json --skip-discovery \
+    --shard 0/4 --db shard0.db
+python pipeline.py countries --config run.config.json --skip-discovery \
+    --shard 1/4 --db shard1.db
+python pipeline.py countries --config run.config.json --skip-discovery \
+    --shard 2/4 --db shard2.db
+python pipeline.py countries --config run.config.json --skip-discovery \
+    --shard 3/4 --db shard3.db
+
+python merge_shards.py latam.db shard0.db shard1.db shard2.db shard3.db
 ```
 
-- `--countries` — список ccTLD (`ru`, `de`, `fr`, ...)
-- `--priorities` — JSON вида `{"ru": 3, "de": 2, "fr": 1}` — соотношение приоритетов между странами (без файла — равный вес всем)
-- `--total-limit` — общий бюджет страниц, который распределяется между странами пропорционально весам
-- `--max-parts` — сколько частей колоночного индекса (parquet) сканировать. Индекс краула разбит на ~300 частей; чем больше `--max-parts`, тем полнее покрытие страны, но дольше и больше трафика. Части не идут по алфавиту доменов подряд (шардирование Spark), поэтому скрипт сэмплирует их равномерно по всему индексу, а не берёт только первые N.
-- `--no-links` — не сохранять отдельные исходящие ссылки в таблицу `links`, только их количество (`pages.outlink_count`). Для скоринга движков по странам сама таблица ссылок не нужна, а именно она отвечает за почти весь объём базы: ~100+ строк ссылок на страницу означает ~50+ ГБ на 1.4 млн страниц против пары сотен МБ без неё. Сами HTML-страницы на диск никогда не пишутся — они разбираются в памяти и сразу отбрасываются.
-- `--proxy` / `--proxy-file` — маршрутизация запросов через прокси (одиночный rotating-gateway URL, либо файл со списком `host:port:user:pass` — тогда запросы идут по кругу по всему пулу). Троттлинг CloudFront у `data.commoncrawl.org` привязан к IP отправителя (~35-40 req/с — безопасный потолок на один IP, подтверждено эмпирически), так что пул прокси нужен, чтобы поднять `--rate-limit` выше этого потолка. Прокси должны поддерживать HTTPS CONNECT-туннель — обычный HTTP-проксирование не подойдёт, так как `data.commoncrawl.org` отдаёт данные только по HTTPS.
-- `--rate-limit` — общий лимит запросов/сек по всем потокам (не на поток). При устойчивой серии сбоев подряд пайплайн сам снижает лимит вдвое и делает паузу 90с (защита от троттлинга).
+`--shard i/N` распределяет URL по стабильному хешу. Каждый процесс пишет в
+свою SQLite-базу, поэтому между workers нет блокировок одного файла.
 
-Как это работает:
-1. `cc_links/cdx.py` — запрос к CDX Index API (`index.commoncrawl.org`) для доменного режима: находит offset/length WARC-записи по конкретному домену.
-2. `cc_links/cc_index.py` — для странового режима: то же самое, что делает Athena, но локально. Common Crawl хранит колоночный индекс (`cc-index` Parquet) в двух местах — в S3 (это то, что обычно сканирует Athena) и зеркалом на `data.commoncrawl.org` по обычному HTTPS. DuckDB (`httpfs`) читает этот Parquet прямо оттуда, без AWS-ключей и без Athena, и сразу отдаёт offset/length WARC-записи, отфильтрованные по `url_host_tld`.
-3. `cc_links/fetch.py` — HTTP Range-запрос к `data.commoncrawl.org` забирает только нужный кусок WARC-файла и парсит HTML.
-4. `cc_links/engines.py` + `cc_links/footprints.json` — эвристическая классификация страницы по движку (meta generator, характерные URL-пути, текст страницы) для 9 категорий: Article, Blog Comment, Directory, Forum, Guestbook, Image Comment, Microblog, Trackback, Social Network. Это не гарантированное определение CMS, а расширяемый набор сигнатур (как у W3Techs/Wappalyzer) — дополняйте `footprints.json` по необходимости.
-5. `cc_links/exclusions.py` + `cc_links/exclusions.json` — глобальные мега-платформы (facebook, twitter/x, telegram, youtube, tiktok, instagram, linkedin, reddit, ...) исключаются и из обхода, и из сохранённых исходящих ссылок, чтобы не искажать статистику по движкам и не создавать им нагрузку. Список редактируется свободно — например, добавьте туда `vk.com`, если нужно исключить и его.
-6. `cc_links/countries.py` — сопоставление ccTLD → страна и распределение бюджета страниц между странами по приоритетам.
-7. `cc_links/db.py` — SQLite-схема: `pages` (url, domain, страна, tld, движок) и `links` (source_url, target_url, target_domain, anchor).
+### 4. Dashboard
+
+```bash
+python export_dashboard.py latam.db dashboard_data.json
+```
+
+Экспорт агрегирует страницы, уникальные домены, категории и платформы в
+небольшой JSON для дашборда.
+
+## Engineering Decisions
+
+### DuckDB вместо Athena
+
+Задача является исследовательским batch-прогоном, а не постоянно работающим
+аналитическим сервисом. DuckDB с `httpfs` читает тот же `cc-index` в Parquet по
+HTTPS/S3 и фильтрует его локально. Это не требует отдельной Athena-инфраструктуры
+и не создаёт Athena scan charges; остаются только ресурсы машины, сетевой путь
+и собственные checkpoints.
+
+### Regex-классификатор вместо DOM в hot path
+
+Профилирование показало, что построение lxml/BeautifulSoup DOM было основным
+CPU-узким местом. Определение `meta name="generator"` переписано на regex по
+полному `<head>`, остальные сигналы проверяются по raw HTML и URL. На контрольной
+выборке новая реализация была примерно в 10 раз быстрее и дала 0 расхождений с
+предыдущей классификацией. DOM создаётся только когда действительно требуется
+извлечь граф `<a href>`.
+
+### IAM instance profile вместо ключей
+
+Основной EC2-путь читает Common Crawl из S3 через IAM instance-profile role.
+SDK получает временные credentials автоматически: постоянных AWS access keys
+нет ни в репозитории, ни в конфигурации, ни на диске сервера.
+
+### Шардинг вместо общей распределённой БД
+
+`--shard i/N` позволяет горизонтально масштабировать CPU- и network-bound fetch
+без дополнительной инфраструктуры. Шарды независимы, резюмируемы и после
+завершения объединяются через `merge_shards.py`. Для долгих запусков используются
+обычные `cron`/`nohup` и checkpoint-файлы.
+
+## Infrastructure Costs
+
+Полный прогон стоит примерно **$2**: основной объём читается между EC2 и
+Common Crawl S3 в одном AWS-регионе без интернет-egress; VPC Endpoint для этого
+проекта не настраивался.
+
+## Как устроен пайплайн
+
+1. [`cc_links/cdx.py`](cc_links/cdx.py) обращается к CDX Index API в режиме
+   конкретных доменов.
+2. [`cc_links/cc_index.py`](cc_links/cc_index.py) через DuckDB читает
+   колоночный `cc-index` Parquet, фильтрует записи и возвращает координаты WARC.
+3. [`cc_links/fetch.py`](cc_links/fetch.py) выполняет range-запрос только нужного
+   WARC-фрагмента через CloudFront, ротирующий шлюз или S3 на EC2.
+4. [`cc_links/engines.py`](cc_links/engines.py) сопоставляет raw HTML и URL с
+   61 сигнатурой из
+   [`cc_links/footprints.json`](cc_links/footprints.json).
+5. [`cc_links/db.py`](cc_links/db.py) сохраняет страницы и, если не указан
+   `--no-links`, исходящие ссылки в SQLite.
+6. [`export_dashboard.py`](export_dashboard.py) формирует данные дашборда.
+
+## Дополнительные режимы
+
+Поиск страниц конкретных доменов через CDX:
+
+```bash
+python pipeline.py domains \
+    --domains example.com another.org \
+    --crawl CC-MAIN-2026-25 \
+    --limit 50 \
+    --db links.db
+```
+
+Небольшой country discovery без общего config:
+
+```bash
+python pipeline.py countries \
+    --countries ru de fr \
+    --total-limit 300 \
+    --priorities priorities.example.json \
+    --max-parts 40 \
+    --crawl CC-MAIN-2026-25 \
+    --db links.db
+```
 
 ## Анализ
 
-```
-python analyze.py --db links.db --report summary
-python analyze.py --db links.db --report top-domains
-python analyze.py --db links.db --report top-pages-by-outlinks
-python analyze.py --db links.db --report external-vs-internal
-python analyze.py --db links.db --report engine-distribution      # доля страниц по категориям движков
-python analyze.py --db links.db --report engine-detail            # детализация по конкретным движкам
-python analyze.py --db links.db --report engine-by-country        # движки в разрезе стран
-python analyze.py --db links.db --report country-coverage         # сколько страниц собрано/классифицировано на страну
-python analyze.py --db links.db --report unclassified-rate        # доля страниц, для которых движок не определён
-python analyze.py --db links.db --sql "SELECT * FROM links LIMIT 10"
+```bash
+python analyze.py --db latam.db --report summary
+python analyze.py --db latam.db --report engine-distribution
+python analyze.py --db latam.db --report engine-detail
+python analyze.py --db latam.db --report engine-by-country
+python analyze.py --db latam.db --report country-coverage
+python analyze.py --db latam.db --report unclassified-rate
 ```
 
-Готовые отчёты в `analyze.py` — это SQL-запросы, эквивалентные тому, что обычно делают в Athena, но выполняются локально через `sqlite3`.
+## Ограничения
 
-## Заметки
-
-- CDX-индекс часто содержит несколько снимков одного и того же URL в разные даты — в `pages` они схлопываются по `url` (`INSERT OR IGNORE`), это нормально для MVP.
-- Классификация движков — эвристика на паблик-сигнатурах (generator-тег, характерные пути, текст страницы), не 100% точная; расширяйте `cc_links/footprints.json` под свои категории.
+- Классификация эвристическая: используются публичные generator-, URL- и
+  HTML-сигнатуры, а не исполнение JavaScript в браузере.
+- Один URL может встречаться в нескольких snapshots Common Crawl; SQLite
+  схлопывает повторения по первичному ключу.
+- CloudFront ограничивает устойчивую скорость одного IP, поэтому для больших
+  запусков используются ротирующий шлюз или основной S3-путь на EC2.
+- Репозиторий не должен содержать реальные IP, токены, proxy credentials,
+  AWS-ключи или локальные пути к секретам.
