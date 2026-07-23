@@ -77,6 +77,8 @@ docker-compose up --build
   entrypoint собирает proxy URL в памяти из `GATEWAY_SCHEME`, `GATEWAY_HOST` и
   `GATEWAY_CRED` и передаёт его Python-процессу через окружение; секрет не
   записывается в config или аргументы процесса;
+- `PIPELINE_FETCH_MODE=threads|async` выбирает fetch-реализацию, а
+  `PIPELINE_CPU_WORKERS` задаёт число процессов CPU-stage для async-режима;
 - `LOG_LEVEL` управляет стандартным Python logging.
 
 Каталоги `DB_HOST_DIR` и `CANDIDATES_HOST_DIR` монтируются соответственно в
@@ -199,6 +201,26 @@ python pipeline.py countries \
 адреса и credentials должны находиться только в gitignored-файлах и не
 передаваться в коммиты.
 
+Существующий потоковый режим остаётся дефолтом (`--fetch-mode threads`). Для
+CloudFront или одного ротирующего gateway можно включить aiohttp-загрузчик:
+
+```bash
+python pipeline.py countries \
+    --config run.config.json \
+    --skip-discovery \
+    --source cloudfront \
+    --fetch-mode async \
+    --workers 32 \
+    --cpu-workers 2
+```
+
+В async-режиме `--workers` ограничивает число одновременных Range-запросов, а
+`--cpu-workers` — число отдельных процессов для gzip/WARC-разбора и
+классификации. Ответ читается потоково и ограничивается длиной запрошенного
+Range; в памяти находится только один WARC-фрагмент, а не WARC-файл целиком.
+Async-режим намеренно не поддерживает `--source s3` и `--proxy-file`: для этих
+вариантов продолжает использоваться проверенный threads-путь.
+
 ### 3. Горизонтальный fetch
 
 Discovery выполняется один раз. После него один JSONL можно обработать
@@ -248,6 +270,22 @@ CPU-узким местом. Определение `meta name="generator"` пе
 предыдущей классификацией. DOM создаётся только когда действительно требуется
 извлечь граф `<a href>`.
 
+### Async для I/O, процессы для CPU
+
+Опциональный `--fetch-mode async` использует `aiohttp` только для сетевой
+части CloudFront/одиночного gateway: semaphore ограничивает конкуррентность,
+Range-ответ читается частями, таймауты и ретраи используют exponential
+backoff. Gzip-декомпрессия, WARC-разбор и классификация передаются в
+`ProcessPoolExecutor`, иначе CPU-stage снова упирался бы в GIL.
+
+Это не замена дефолтному threads-пути и не универсальное ускорение. На одном
+ядре выигрыш ограничен общей CPU-производительностью и может исчезнуть, когда
+классификация является главным узким местом. Async полезнее на I/O-bound путях
+с высокой задержкой — CloudFront и gateway — и на машинах, где несколько
+CPU-процессов действительно могут работать параллельно. Воспроизводимый
+CloudFront-бенчмарк и его ограничения находятся в
+[`benchmarks/README.md`](benchmarks/README.md).
+
 ### IAM instance profile вместо ключей
 
 Основной EC2-путь читает Common Crawl из S3 через IAM instance-profile role.
@@ -273,14 +311,18 @@ Common Crawl S3 в одном AWS-регионе без интернет-egress;
    конкретных доменов.
 2. [`cc_links/cc_index.py`](cc_links/cc_index.py) через DuckDB читает
    колоночный `cc-index` Parquet, фильтрует записи и возвращает координаты WARC.
-3. [`cc_links/fetch.py`](cc_links/fetch.py) выполняет range-запрос только нужного
-   WARC-фрагмента через CloudFront, ротирующий шлюз или S3 на EC2.
-4. [`cc_links/engines.py`](cc_links/engines.py) сопоставляет raw HTML и URL с
+3. [`cc_links/fetch.py`](cc_links/fetch.py) содержит дефолтный threads/S3-путь,
+   а [`cc_links/async_fetch.py`](cc_links/async_fetch.py) — опциональный
+   aiohttp-путь для CloudFront и одного gateway.
+4. [`cc_links/processing.py`](cc_links/processing.py) выполняет общий для обоих
+   режимов WARC-разбор и CPU-классификацию; async-путь вызывает его в отдельных
+   процессах.
+5. [`cc_links/engines.py`](cc_links/engines.py) сопоставляет raw HTML и URL с
    61 сигнатурой из
    [`cc_links/footprints.json`](cc_links/footprints.json).
-5. [`cc_links/db.py`](cc_links/db.py) сохраняет страницы и, если не указан
-   `--no-links`, исходящие ссылки в SQLite.
-6. [`export_dashboard.py`](export_dashboard.py) формирует данные дашборда.
+6. [`cc_links/storage.py`](cc_links/storage.py) сохраняет страницы и, если не
+   указан `--no-links`, исходящие ссылки в SQLite или опциональный MySQL.
+7. [`export_dashboard.py`](export_dashboard.py) формирует данные дашборда.
 
 ## Дополнительные режимы
 

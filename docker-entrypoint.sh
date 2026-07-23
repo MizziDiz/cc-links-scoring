@@ -61,6 +61,18 @@ fi
 if [ -n "${PIPELINE_WORKERS:-}" ]; then
     set -- "$@" --workers "$PIPELINE_WORKERS"
 fi
+if [ -n "${PIPELINE_FETCH_MODE:-}" ]; then
+    case "$PIPELINE_FETCH_MODE" in
+        threads | async) set -- "$@" --fetch-mode "$PIPELINE_FETCH_MODE" ;;
+        *)
+            echo "PIPELINE_FETCH_MODE must be threads or async" >&2
+            exit 2
+            ;;
+    esac
+fi
+if [ -n "${PIPELINE_CPU_WORKERS:-}" ]; then
+    set -- "$@" --cpu-workers "$PIPELINE_CPU_WORKERS"
+fi
 if [ -n "${PIPELINE_RATE_LIMIT:-}" ]; then
     set -- "$@" --rate-limit "$PIPELINE_RATE_LIMIT"
 fi

@@ -42,7 +42,7 @@ class PipelineStorageTests(unittest.TestCase):
             patch.object(pipeline, "run_countries") as run,
         ):
             pipeline.main()
-        self.assertEqual(run.call_args.args[-1], "sqlite")
+        self.assertEqual(run.call_args.args[-3:], ("sqlite", "threads", None))
 
     def test_cli_backend_can_come_from_environment(self) -> None:
         with (
@@ -51,7 +51,29 @@ class PipelineStorageTests(unittest.TestCase):
             patch.object(pipeline, "run_countries") as run,
         ):
             pipeline.main()
-        self.assertEqual(run.call_args.args[-1], "mysql")
+        self.assertEqual(run.call_args.args[-3:], ("mysql", "threads", None))
+
+    def test_cli_can_select_async_fetch_and_cpu_workers(self) -> None:
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "pipeline.py",
+                    "countries",
+                    "--config",
+                    "run.config.json",
+                    "--fetch-mode",
+                    "async",
+                    "--cpu-workers",
+                    "3",
+                ],
+            ),
+            patch.object(pipeline, "run_countries") as run,
+        ):
+            pipeline.main()
+        self.assertEqual(run.call_args.args[-3:], ("sqlite", "async", 3))
 
 
 if __name__ == "__main__":
