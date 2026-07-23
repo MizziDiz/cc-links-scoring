@@ -6,3 +6,4 @@ tqdm>=4.66.0
 duckdb>=1.0.0
 boto3>=1.34.0
 lxml>=5.0.0
+mysql-connector-python>=8.4,<10

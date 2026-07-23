@@ -91,6 +91,66 @@ checkpoint state переживают пересборку и перезапус
 стандартную AWS credential chain; на EC2 предпочтителен instance profile,
 доступный контейнеру, без постоянных ключей в `.env`.
 
+## Storage backends
+
+SQLite остаётся дефолтным хранилищем. Для разового прогона и одной пишущей
+процедуры файл `latam.db` проще в эксплуатации, не требует отдельного сервера и
+остаётся оправданным выбором. Старые команды, `ec2_setup.sh`, `merge_shards.py`
+и `run.config.json` продолжают работать с SQLite без изменений.
+
+MySQL — опциональный backend для нескольких процессов записи, общего доступа с
+разных узлов и длительной аналитики без копирования SQLite-файла. В MySQL-схеме
+есть индексы по `pages.domain`, `pages.bucket`, `pages.engine_name`, а также
+индексы для текущих engine/country/link-отчётов. Полный URL хранится как `TEXT`;
+технический SHA-256 `url_hash` используется как primary/foreign key, поэтому
+длинные Common Crawl URL не обрезаются.
+
+Backend выбирается одним из способов:
+
+- по умолчанию или `DB_BACKEND=sqlite` — локальный файл из `--db`;
+- `DB_BACKEND=mysql` — MySQL по `MYSQL_DSN`;
+- для обычного запуска можно добавить `"db_backend": "mysql"` в локальную
+  копию JSON-конфига; DSN всё равно передаётся только через окружение.
+
+Пример локального окружения без Docker:
+
+```bash
+export DB_BACKEND=mysql
+export MYSQL_DSN='mysql://user:URL_ENCODED_PASSWORD@db-host:3306/cc_links'
+python pipeline.py countries --config run.config.json
+python analyze.py --report summary
+```
+
+Пароль в DSN должен быть URL-encoded. Не добавляйте DSN, пароли или адреса
+рабочих серверов в tracked-файлы.
+
+В Compose сервис MySQL находится в отдельном profile и не запускается при
+обычном SQLite-прогоне. Скопируйте `.env.example` в `.env`, замените оба
+`**PUT_IN_ENV**`, синхронно укажите тот же пароль в `MYSQL_DSN`, затем задайте
+`DB_BACKEND=mysql` и запустите:
+
+```bash
+docker compose --profile mysql up --build
+```
+
+Официальный MySQL image при первом создании volume автоматически выполняет
+[`docker/mysql/init/001_schema.sql`](docker/mysql/init/001_schema.sql).
+Приложение также выполняет идемпотентный `CREATE TABLE IF NOT EXISTS`, а
+connection retry позволяет дождаться готовности контейнера. Данные MySQL
+хранятся в named volume `mysql_data`.
+
+Перенос существующей таблицы `pages` из `latam.db`:
+
+```bash
+export MYSQL_DSN='mysql://user:URL_ENCODED_PASSWORD@db-host:3306/cc_links'
+python migrate_sqlite_to_mysql.py --sqlite latam.db --batch-size 2000
+```
+
+Миграцию `pages` можно безопасно перезапускать: дубликаты URL игнорируются по
+`url_hash`. Скрипт намеренно не переносит таблицу `links`: основной
+classify-only путь работает с `no_links=true`, а повторяемая миграция огромного
+link graph требует отдельной стратегии checkpoint/deduplication.
+
 Основная конфигурация запуска находится в
 [`run.config.json`](run.config.json). Она задаёт crawl, выходную SQLite-базу,
 категории, лимиты, источник WARC, число workers и параметры checkpoint.
