@@ -6,6 +6,7 @@ of an all-or-nothing global crawl.
 """
 import json
 import os
+from typing import Dict, Iterable, List, Mapping, Optional, Tuple
 
 # Common ccTLD -> country name. Not exhaustive, but covers the standard ISO
 # ccTLD set used by Common Crawl's url_host_tld column. Extend as needed.
@@ -67,11 +68,14 @@ CCTLD_COUNTRIES = {
 }
 
 
-def country_name(tld: str) -> str:
+def country_name(tld: Optional[str]) -> str:
     return CCTLD_COUNTRIES.get((tld or "").lower(), (tld or "").upper())
 
 
-def load_priorities(path: str = None, countries=None) -> dict:
+def load_priorities(
+    path: Optional[str] = None,
+    countries: Optional[Iterable[str]] = None,
+) -> Dict[str, float]:
     """Load {cctld: weight} from a JSON file, or default to equal weight 1.0
     for the given list of ccTLDs (or all known ccTLDs if none given)."""
     if path and os.path.exists(path):
@@ -83,7 +87,7 @@ def load_priorities(path: str = None, countries=None) -> dict:
     return {t.lower(): 1.0 for t in tlds}
 
 
-def load_category_map(path: str):
+def load_category_map(path: str) -> Tuple[Dict[str, List[str]], Dict[str, str]]:
     """Load a categories JSON: {"Category name": ["co", "cl", ...], ...}.
 
     A category groups one or more ccTLDs that share a single budget (so a
@@ -96,7 +100,7 @@ def load_category_map(path: str):
     """
     with open(path, "r", encoding="utf-8") as f:
         categories = json.load(f)
-    tld_to_category = {}
+    tld_to_category: Dict[str, str] = {}
     for name, tlds in categories.items():
         for t in tlds:
             t = t.lower()
@@ -110,10 +114,10 @@ def load_category_map(path: str):
     return categories, tld_to_category
 
 
-def allocate_budget(priorities: dict, total: int) -> dict:
+def allocate_budget(priorities: Mapping[str, float], total: int) -> Dict[str, int]:
     """Split a total page/URL budget across countries proportionally to their weight."""
     weight_sum = sum(priorities.values()) or 1.0
-    budgets = {}
+    budgets: Dict[str, int] = {}
     remaining = total
     tlds = list(priorities.keys())
     for i, tld in enumerate(tlds):

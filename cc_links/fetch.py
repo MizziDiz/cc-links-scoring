@@ -4,42 +4,71 @@ This replaces the Athena approach: instead of scanning S3 with SQL, we use the
 offset/length from the CDX index to pull only the relevant bytes over HTTPS,
 then parse that one record with warcio + BeautifulSoup.
 """
+import logging
 import threading
 import time
+import warnings
 from io import BytesIO
+from typing import Any, Iterable, List, Optional, Sequence, Tuple, Type
 from urllib.parse import urljoin, urlparse
 
-import warnings
-
 import requests
-from bs4 import BeautifulSoup
+from botocore.exceptions import BotoCoreError, ClientError
+from bs4 import BeautifulSoup, FeatureNotFound
+from bs4.exceptions import ParserRejectedMarkup
+from requests.exceptions import ConnectionError as RequestsConnectionError
+from requests.exceptions import HTTPError, Timeout
+from warcio.archiveiterator import ArchiveIterator
+from warcio.exceptions import ArchiveLoadFailed
 
 # Some fetched pages are really XML (RSS/sitemaps) served as text/html; bs4 warns
 # about parsing XML with an HTML parser. It's harmless here (they just don't match
 # any CMS footprint), so silence the noise across millions of pages.
 try:
     from bs4 import XMLParsedAsHTMLWarning
+
     warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
-except Exception:
+except ImportError:
     pass
 from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
-from warcio.archiveiterator import ArchiveIterator
 
 DATA_BASE_URL = "https://data.commoncrawl.org/"
+logger = logging.getLogger(__name__)
 
-_thread_local = threading.local()
+_thread_local: threading.local = threading.local()
+
+NETWORK_EXCEPTIONS: Tuple[Type[Exception], ...] = (
+    Timeout,
+    RequestsConnectionError,
+    HTTPError,
+)
+S3_EXCEPTIONS: Tuple[Type[Exception], ...] = (BotoCoreError, ClientError)
+EXPECTED_FETCH_ERRORS: Tuple[Type[Exception], ...] = (
+    *NETWORK_EXCEPTIONS,
+    *S3_EXCEPTIONS,
+    ArchiveLoadFailed,
+    OSError,
+    EOFError,
+    UnicodeError,
+    ValueError,
+    TypeError,
+    AttributeError,
+    FeatureNotFound,
+    ParserRejectedMarkup,
+)
 
 # lxml parses HTML several times faster than the pure-Python html.parser; the
 # whole fetch is CPU-bound on parsing, so this is the single biggest speedup.
 try:
     import lxml  # noqa: F401
+
     _BS_PARSER = "lxml"
-except Exception:
+except ImportError:
     _BS_PARSER = "html.parser"
 
 
-def make_soup(html):
+def make_soup(html: str) -> BeautifulSoup:
     """BeautifulSoup with the fastest available parser (lxml, else html.parser)."""
     return BeautifulSoup(html, _BS_PARSER)
 
@@ -52,15 +81,15 @@ class RateLimiter:
     caps the aggregate request rate regardless of how many threads are fetching.
     """
 
-    def __init__(self, rate_per_sec: float):
+    def __init__(self, rate_per_sec: float) -> None:
         self.set_rate(rate_per_sec)
         self.lock = threading.Lock()
         self.next_time = time.monotonic()
 
-    def set_rate(self, rate_per_sec: float):
+    def set_rate(self, rate_per_sec: float) -> None:
         self.min_interval = 1.0 / max(rate_per_sec, 0.1)
 
-    def wait(self):
+    def wait(self) -> None:
         with self.lock:
             now = time.monotonic()
             start = max(self.next_time, now)
@@ -95,16 +124,16 @@ class ProxyPool:
     None and the caller falls back to a direct (un-proxied) request.
     """
 
-    def __init__(self, proxy_urls, fail_threshold: int = 3):
+    def __init__(self, proxy_urls: Sequence[str], fail_threshold: int = 3) -> None:
         if not proxy_urls:
             raise ValueError("proxy pool needs at least one proxy URL")
-        self.live = list(dict.fromkeys(proxy_urls))
+        self.live: List[str] = list(dict.fromkeys(proxy_urls))
         self.fail_threshold = fail_threshold
-        self.fails = {}
+        self.fails: dict[str, int] = {}
         self.lock = threading.Lock()
         self.idx = 0
 
-    def next(self):
+    def next(self) -> Optional[str]:
         with self.lock:
             if not self.live:
                 return None
@@ -112,7 +141,7 @@ class ProxyPool:
             self.idx += 1
             return url
 
-    def report(self, url, ok: bool):
+    def report(self, url: Optional[str], ok: bool) -> None:
         if url is None:
             return
         with self.lock:
@@ -128,7 +157,7 @@ class ProxyPool:
         with self.lock:
             return len(self.live)
 
-    def add(self, proxy_urls):
+    def add(self, proxy_urls: Iterable[str]) -> None:
         with self.lock:
             for u in proxy_urls:
                 if u not in self.live:
@@ -136,11 +165,11 @@ class ProxyPool:
                     self.fails.pop(u, None)
 
 
-_proxy_pool = None
-_gateway = None
+_proxy_pool: Optional[ProxyPool] = None
+_gateway: Optional[str] = None
 
 
-def set_proxy(proxy_url: str):
+def set_proxy(proxy_url: str) -> None:
     """Route ALL requests through a single rotating-gateway endpoint.
 
     A rotating gateway exits from a fresh IP on every request, so CloudFront's
@@ -151,21 +180,21 @@ def set_proxy(proxy_url: str):
     _gateway = proxy_url
 
 
-def set_proxy_pool(proxy_urls):
+def set_proxy_pool(proxy_urls: Sequence[str]) -> None:
     """Round-robin requests across a list of proxy URLs."""
     global _proxy_pool
     _proxy_pool = ProxyPool(proxy_urls)
 
 
-def start_proxy_refresher(path: str, interval: float = 120.0):
+def start_proxy_refresher(path: str, interval: float = 120.0) -> None:
     """Background daemon that periodically re-reads the proxy file and folds any
     new entries into the live pool -- so an external harvester can keep the pool
     topped up (free proxies die constantly) without restarting the fetch."""
-    def loop():
+    def loop() -> None:
         while True:
             time.sleep(interval)
             try:
-                urls = []
+                urls: List[str] = []
                 with open(path, "r", encoding="utf-8") as f:
                     for line in f:
                         line = line.strip()
@@ -182,9 +211,9 @@ def start_proxy_refresher(path: str, interval: float = 120.0):
                     _proxy_pool.add(urls)
                     after = _proxy_pool.size()
                     if after != before:
-                        print(f"[proxy-refresh] pool {before} -> {after} live", flush=True)
-            except Exception as e:
-                print(f"[proxy-refresh] {e}", flush=True)
+                        logger.info("[proxy-refresh] pool %d -> %d live", before, after)
+            except (OSError, ValueError) as exc:
+                logger.warning("[proxy-refresh] %s", exc)
 
     t = threading.Thread(target=loop, daemon=True)
     t.start()
@@ -192,7 +221,7 @@ def start_proxy_refresher(path: str, interval: float = 120.0):
 
 def load_proxy_file(path: str) -> int:
     """Load a pool from lines of `host:port:user:pass` (or `host:port`). Returns pool size."""
-    urls = []
+    urls: List[str] = []
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -227,10 +256,10 @@ def get_session(pool_size: int = 32) -> requests.Session:
 
 
 _S3_BUCKET = "commoncrawl"
-_s3_client = None
+_s3_client: Any = None
 
 
-def enable_s3(pool_size: int = 64):
+def enable_s3(pool_size: int = 64) -> None:
     """Fetch WARC records straight from the CommonCrawl S3 bucket instead of the
     CloudFront mirror (data.commoncrawl.org). S3 has no per-IP throttle, so this
     is the high-throughput path -- but the bucket denies anonymous access from
@@ -286,7 +315,7 @@ def fetch_warc_record(filename: str, offset: int, length: int, timeout: int = 20
     try:
         resp = get_session().get(url, headers=headers, timeout=timeout, proxies=proxies)
         resp.raise_for_status()
-    except Exception:
+    except NETWORK_EXCEPTIONS:
         if _proxy_pool is not None:
             _proxy_pool.report(p, False)  # a dead free proxy gets evicted after a few of these
         raise
@@ -295,7 +324,7 @@ def fetch_warc_record(filename: str, offset: int, length: int, timeout: int = 20
     return resp.content
 
 
-def parse_html_record(raw_bytes: bytes):
+def parse_html_record(raw_bytes: bytes) -> Optional[str]:
     """Return the decoded HTML body of the first HTML response record in a WARC chunk, or None."""
     stream = BytesIO(raw_bytes)
     for record in ArchiveIterator(stream):
@@ -306,22 +335,23 @@ def parse_html_record(raw_bytes: bytes):
             continue
         try:
             body = record.content_stream().read()
-        except Exception:
+        except (ArchiveLoadFailed, OSError, EOFError, ValueError):
             continue
-        try:
-            return body.decode("utf-8", errors="replace")
-        except Exception:
-            return None
+        return body.decode("utf-8", errors="replace")
     return None
 
 
-def extract_links_from_html(html: str, page_url: str, soup=None):
+def extract_links_from_html(
+    html: str,
+    page_url: str,
+    soup: Optional[BeautifulSoup] = None,
+) -> List[Tuple[str, str]]:
     """Return a list of (target_url, anchor_text) tuples found in the HTML."""
     if soup is None:
         soup = make_soup(html)
-    links = []
+    links: List[Tuple[str, str]] = []
     for a in soup.find_all("a", href=True):
-        href = a["href"].strip()
+        href = str(a["href"]).strip()
         if not href or href.startswith("#") or href.startswith("javascript:"):
             continue
         try:

@@ -16,9 +16,9 @@ import argparse
 import random
 
 from cc_links import fetch as fetch_mod
-from cc_links.fetch import fetch_warc_record, parse_html_record, make_soup, load_proxy_file
-from cc_links.engines import classify_engine, get_generator
 from cc_links.cc_index import load_candidates
+from cc_links.engines import classify_engine, get_generator
+from cc_links.fetch import fetch_warc_record, load_proxy_file, make_soup, parse_html_record
 
 
 def pick(candidates_file, url, bucket, n):

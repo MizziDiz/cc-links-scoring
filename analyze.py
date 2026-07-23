@@ -6,9 +6,15 @@ Usage:
   python analyze.py --db links.db --sql "SELECT * FROM links LIMIT 10"
 """
 import argparse
+import logging
 import sqlite3
+from typing import Dict
 
-REPORTS = {
+from cc_links.logging_config import configure_logging
+
+logger = logging.getLogger(__name__)
+
+REPORTS: Dict[str, str] = {
     "top-domains": """
         SELECT target_domain, COUNT(*) AS link_count
         FROM links
@@ -138,17 +144,18 @@ REPORTS = {
 }
 
 
-def print_table(cursor):
+def print_table(cursor: sqlite3.Cursor) -> None:
     cols = [d[0] for d in cursor.description]
     rows = cursor.fetchall()
-    print(" | ".join(cols))
-    print("-" * (len(" | ".join(cols))))
+    logger.info(" | ".join(cols))
+    logger.info("-" * (len(" | ".join(cols))))
     for row in rows:
-        print(" | ".join(str(v) for v in row))
-    print(f"\n({len(rows)} rows)")
+        logger.info(" | ".join(str(v) for v in row))
+    logger.info("(%d rows)", len(rows))
 
 
-def main():
+def main() -> None:
+    configure_logging()
     parser = argparse.ArgumentParser(description="Analyze the collected Common Crawl link data.")
     parser.add_argument("--db", default="links.db", help="SQLite database path")
     parser.add_argument("--report", choices=list(REPORTS.keys()), help="Run a canned report")

@@ -12,11 +12,12 @@ hot path free of BeautifulSoup entirely when links aren't being stored.
 import json
 import os
 import re
+from typing import Any, Dict, List, Optional, Tuple
 
 _DEFAULT_PATH = os.path.join(os.path.dirname(__file__), "footprints.json")
 
 with open(_DEFAULT_PATH, "r", encoding="utf-8") as _f:
-    _FOOTPRINTS = json.load(_f)["engines"]
+    _FOOTPRINTS: List[Dict[str, Any]] = json.load(_f)["engines"]
 
 _META_RE = re.compile(r"<meta\b[^>]*>", re.I)
 _GEN_NAME_RE = re.compile(r"""name\s*=\s*["']?\s*generator""", re.I)
@@ -41,7 +42,11 @@ def get_generator(html: str) -> str:
     return ""
 
 
-def classify_engine(html: str, url: str, soup=None):
+def classify_engine(
+    html: str,
+    url: str,
+    soup: Any = None,
+) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """Return (category, engine_name, matched_signal) or (None, None, None).
 
     `soup` is accepted for backwards compatibility but no longer used -- all
@@ -64,5 +69,5 @@ def classify_engine(html: str, url: str, soup=None):
     return None, None, None
 
 
-def known_categories():
+def known_categories() -> List[str]:
     return sorted({e["category"] for e in _FOOTPRINTS})

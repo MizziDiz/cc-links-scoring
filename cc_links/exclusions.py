@@ -6,12 +6,13 @@ statistics meaningful and avoids sending any traffic their way.
 """
 import json
 import os
+from typing import Optional, Set
 
 _DEFAULT_PATH = os.path.join(os.path.dirname(__file__), "exclusions.json")
 
 
-def load_excluded_domains(extra_path: str = None) -> set:
-    domains = set()
+def load_excluded_domains(extra_path: Optional[str] = None) -> Set[str]:
+    domains: Set[str] = set()
     with open(_DEFAULT_PATH, "r", encoding="utf-8") as f:
         domains.update(d.lower() for d in json.load(f)["domains"])
 
@@ -23,6 +24,6 @@ def load_excluded_domains(extra_path: str = None) -> set:
     return domains
 
 
-def is_excluded(domain: str, excluded: set) -> bool:
+def is_excluded(domain: Optional[str], excluded: Set[str]) -> bool:
     domain = (domain or "").lower()
     return any(domain == d or domain.endswith("." + d) for d in excluded)
