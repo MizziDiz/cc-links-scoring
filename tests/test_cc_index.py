@@ -87,28 +87,33 @@ class ColumnarIndexSourceTests(unittest.TestCase):
     def test_feedback_profile_reorders_existing_manifest_without_rescan(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "manifest.jsonl")
+            good_url = "https://good.test/viewtopic.php?t=1"
+            weak_url = "https://weak.test/forum"
+            from cc_links.prospects import classify_discovery_url
+            good_pattern = classify_discovery_url(
+                good_url, include_broad=True
+            )[0].pattern_id
             with open(path, "w", encoding="utf-8") as output:
                 for record in [
                     {
-                        "url": "https://weak.test/forum",
+                        "url": weak_url,
                         "bucket": "latam",
                         "discovery_tier": 0,
                         "prefetch_score": 60,
                         "pattern_id": "rule:weak",
                     },
                     {
-                        "url": "https://good.test/forum",
+                        "url": good_url,
                         "bucket": "latam",
                         "discovery_tier": 0,
                         "prefetch_score": 55,
-                        "pattern_id": "rule:good",
                     },
                 ]:
                     output.write(json.dumps(record) + "\n")
             profile = {
                 "patterns": {
                     "rule:weak": {"score_adjustment": -10},
-                    "rule:good": {"score_adjustment": 10},
+                    good_pattern: {"score_adjustment": 10},
                 },
                 "pattern_buckets": {},
             }
@@ -117,7 +122,10 @@ class ColumnarIndexSourceTests(unittest.TestCase):
                     path, priority_profile=profile
                 )
             ]
-            self.assertEqual(urls[0], "https://good.test/forum")
+            self.assertEqual(urls[0], good_url)
+            records = list(load_candidates_prioritized(path))
+            self.assertEqual(records[0].get("pattern_id"), "rule:weak")
+            self.assertTrue(records[1].get("pattern_id"))
 
     def test_checkpoint_identity_rejects_silent_ruleset_change(self):
         expected = {

@@ -584,6 +584,7 @@ def load_candidates_prioritized(
     if priority_profile:
         from cc_links.feedback import priority_adjustment
         adjustment_fn = priority_adjustment
+    from cc_links.prospects import classify_discovery_url
     with open(path, "rb") as source:
         while True:
             position = source.tell()
@@ -598,16 +599,26 @@ def load_candidates_prioritized(
                 continue
             tier = int(record.get("discovery_tier", 0))
             score = int(record.get("prefetch_score", 0))
+            pattern_id = str(record.get("pattern_id", ""))
+            if not pattern_id:
+                evidence = classify_discovery_url(
+                    str(record.get("url", "")), include_broad=True
+                )
+                if evidence:
+                    pattern_id = evidence[0].pattern_id
             if adjustment_fn:
                 score += adjustment_fn(
                     priority_profile,
-                    str(record.get("pattern_id", "")),
+                    pattern_id,
                     record.get("bucket"),
                 )
-            ranked.append((tier, -score, rng.random(), position))
+            ranked.append((tier, -score, rng.random(), position, pattern_id))
     ranked.sort()
 
     with open(path, "r", encoding="utf-8") as source:
-        for _tier, _score, _tie, position in ranked:
+        for _tier, _score, _tie, position, pattern_id in ranked:
             source.seek(position)
-            yield json.loads(source.readline())
+            record = json.loads(source.readline())
+            if pattern_id and not record.get("pattern_id"):
+                record["pattern_id"] = pattern_id
+            yield record
