@@ -279,6 +279,38 @@ class ProspectDatabaseTests(unittest.TestCase):
             )
             conn.close()
 
+    def test_init_db_migrates_legacy_processed_table_before_indexing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "legacy.db")
+            conn = sqlite3.connect(path)
+            conn.execute(
+                """CREATE TABLE processed_urls (
+                       normalized_url TEXT PRIMARY KEY,
+                       url TEXT NOT NULL,
+                       crawl TEXT,
+                       outcome TEXT NOT NULL,
+                       score INTEGER,
+                       processed_at TEXT
+                   )"""
+            )
+            conn.commit()
+            conn.close()
+
+            conn = init_db(path)
+            columns = {
+                row[1] for row in conn.execute(
+                    "PRAGMA table_info(processed_urls)"
+                )
+            }
+            self.assertIn("pattern_id", columns)
+            indexes = {
+                row[1] for row in conn.execute(
+                    "PRAGMA index_list(processed_urls)"
+                )
+            }
+            self.assertIn("idx_processed_urls_pattern", indexes)
+            conn.close()
+
     def test_score_floor_archives_old_candidates(self):
         with tempfile.TemporaryDirectory() as tmp:
             conn = init_db(str(Path(tmp) / "test.db"))

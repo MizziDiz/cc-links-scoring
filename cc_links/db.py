@@ -82,7 +82,6 @@ CREATE TABLE IF NOT EXISTS processed_urls (
 );
 
 CREATE INDEX IF NOT EXISTS idx_processed_urls_outcome ON processed_urls(outcome);
-CREATE INDEX IF NOT EXISTS idx_processed_urls_pattern ON processed_urls(pattern_id);
 
 CREATE TABLE IF NOT EXISTS fetch_attempts (
     normalized_url TEXT PRIMARY KEY,
@@ -135,6 +134,12 @@ def init_db(path: str) -> sqlite3.Connection:
     conn.executescript(SCHEMA)
     for table, columns in ATTRIBUTION_COLUMNS.items():
         _ensure_columns(conn, table, columns)
+    # Existing databases receive attribution columns via ALTER TABLE above, so
+    # indexes that reference those columns must be created afterwards.
+    conn.execute(
+        """CREATE INDEX IF NOT EXISTS idx_processed_urls_pattern
+           ON processed_urls(pattern_id)"""
+    )
     conn.commit()
     return conn
 
