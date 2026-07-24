@@ -110,6 +110,24 @@ def load_category_map(path: str):
     return categories, tld_to_category
 
 
+def load_category_limits(path: str, categories, default_limit: int) -> dict:
+    """Load optional per-category discovery limits with a flat fallback."""
+    limits = {name: int(default_limit) for name in categories}
+    if not path:
+        return limits
+    with open(path, "r", encoding="utf-8") as f:
+        configured = json.load(f)
+    unknown = sorted(set(configured) - set(categories))
+    if unknown:
+        raise ValueError(f"unknown categories in limits file: {unknown}")
+    for name, value in configured.items():
+        value = int(value)
+        if value < 1:
+            raise ValueError(f"category limit must be positive: {name}={value}")
+        limits[name] = value
+    return limits
+
+
 def allocate_budget(priorities: dict, total: int) -> dict:
     """Split a total page/URL budget across countries proportionally to their weight."""
     weight_sum = sum(priorities.values()) or 1.0

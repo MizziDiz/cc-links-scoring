@@ -142,15 +142,19 @@ def run_countries(countries, crawl, total_limit, per_country_limit, priorities_f
                    workers, max_parts, exclude_file, candidates_file, commit_every, skip_discovery,
                    rate_limit, max_per_domain, proxy, proxy_file, store_links,
                    categories_file, per_category_limit, discovery_only, discover_delay, source,
-                   shard=None):
+                   index_source="auto", shard=None):
     excluded = load_excluded_domains(exclude_file)
     candidates_file = candidates_file or (db_path + ".candidates.jsonl")
     fetch_mod.rate_limiter.set_rate(rate_limit)
     discovery_proxies = None
+    resolved_index_source = (
+        "s3" if source == "s3" else "https"
+    ) if index_source == "auto" else index_source
+    print(f"[discover] index_source={resolved_index_source}")
     if source == "s3":
         # High-throughput path for running inside AWS: fetch WARC records straight
         # from S3 (no CloudFront per-IP throttle, no proxies). Requires an EC2 role
-        # that can read S3. Discovery still uses the CloudFront/parquet path.
+        # that can read S3. With --index-source auto, discovery uses S3 too.
         fetch_mod.enable_s3(pool_size=max(workers * 2, 64))
         print(f"[source] fetching WARC records from s3://commoncrawl (signed, no rate limit)")
     elif proxy_file:
@@ -192,6 +196,7 @@ def run_countries(countries, crawl, total_limit, per_country_limit, priorities_f
             crawl, budgets, tld_to_category, lambda d: is_excluded(d, excluded),
             out_path=candidates_file, max_parts=max_parts, max_per_domain=max_per_domain,
             progress=progress, proxies=discovery_proxies, part_delay=discover_delay,
+            index_source=resolved_index_source,
         )
         for name, remaining in shortfall.items():
             if remaining > 0:
@@ -345,7 +350,10 @@ def main():
                               help="Where to fetch WARC records: 'cloudfront' (data.commoncrawl.org, "
                                    "per-IP throttled, works anywhere) or 's3' (s3://commoncrawl, no "
                                    "throttle, but only from inside AWS -- e.g. an EC2 instance with an "
-                                   "S3-read IAM role). Discovery always uses the CloudFront/parquet path.")
+                                   "S3-read IAM role).")
+    p_countries.add_argument(
+        "--index-source", choices=["auto", "https", "s3"], default="auto",
+        help="Where DuckDB reads the Parquet index; auto uses S3 with --source s3")
     p_countries.add_argument("--proxy", help="Single proxy URL, e.g. a rotating-gateway endpoint "
                                               "http://user:pass@gateway:port")
     p_countries.add_argument("--proxy-file", help="File with one proxy per line (host:port:user:pass) -- "
@@ -402,7 +410,7 @@ def main():
                        args.candidates_file, args.commit_every, args.skip_discovery, args.rate_limit,
                        args.max_per_domain, args.proxy, args.proxy_file, not args.no_links,
                        args.categories_file, args.per_category_limit, args.discovery_only,
-                       args.discover_delay, args.source, args.shard)
+                       args.discover_delay, args.source, args.index_source, args.shard)
 
 
 if __name__ == "__main__":
