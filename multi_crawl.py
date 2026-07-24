@@ -12,7 +12,8 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from urllib.request import urlopen
 
-from cc_links.prospects import normalize_url
+from cc_links.feedback import priority_profile_hash
+from cc_links.prospects import discovery_ruleset_identity, normalize_url
 
 COLLINFO_URL = "https://index.commoncrawl.org/collinfo.json"
 DISCOVERY_MARKER_SUFFIX = ".discovery-complete"
@@ -61,12 +62,37 @@ def discovery_marker(candidates_file):
     return candidates_file + DISCOVERY_MARKER_SUFFIX
 
 
-def mark_discovery_complete(candidates_file):
+def read_discovery_marker(candidates_file):
+    marker = discovery_marker(candidates_file)
+    if not os.path.exists(marker):
+        return None
+    try:
+        with open(marker, encoding="utf-8") as source:
+            payload = json.load(source)
+        return payload.get("identity", {})
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        # Legacy markers contained only the word "complete".
+        return {}
+
+
+def mark_discovery_complete(candidates_file, identity=None):
     marker = discovery_marker(candidates_file)
     temporary = marker + ".tmp"
     with open(temporary, "w", encoding="utf-8") as output:
-        output.write("complete\n")
+        if identity:
+            json.dump({"identity": identity}, output, sort_keys=True)
+            output.write("\n")
+        else:
+            output.write("complete\n")
     os.replace(temporary, marker)
+
+
+def run_identity(args, crawl):
+    return discovery_ruleset_identity(
+        crawl, args.footprints, args.discovery_profile,
+        args.broad_index_sample,
+        priority_profile_hash(getattr(args, "pattern_priorities", None)),
+    )
 
 
 def resolve_discovery_shards(requested, cpu_count=None):
@@ -96,10 +122,14 @@ def existing_shard_count(state_dir, crawl):
 
 
 def build_command(args, crawl, candidates_file, *, per_category_limit=None,
-                  discovery_only=False, skip_discovery=False, part_shard=None):
+                  discovery_only=False, skip_discovery=False, part_shard=None,
+                  category_limit_divisor=1):
     command = [
         sys.executable, os.path.join(os.path.dirname(__file__), "prospect_pipeline.py"),
         "--categories-file", args.categories_file,
+        "--discovery-profile", args.discovery_profile,
+        "--broad-quota-fraction", str(args.broad_quota_fraction),
+        "--broad-index-sample", str(args.broad_index_sample),
         "--per-category-limit", str(per_category_limit or args.per_category_limit),
         "--crawl", crawl,
         "--db", args.db,
@@ -109,10 +139,19 @@ def build_command(args, crawl, candidates_file, *, per_category_limit=None,
         "--max-parts", str(args.max_parts),
         "--max-per-domain", str(args.max_per_domain),
         "--source", args.source,
+        "--index-source", args.index_source,
         "--progress-interval", str(args.progress_interval),
     ]
     if args.footprints:
         command.extend(["--footprints", args.footprints])
+    if getattr(args, "pattern_priorities", None):
+        command.extend(["--pattern-priorities", args.pattern_priorities])
+    if args.category_limits:
+        command.extend(["--category-limits", args.category_limits])
+    if getattr(args, "discovery_metrics", False):
+        command.append("--discovery-metrics")
+    if category_limit_divisor > 1:
+        command.extend(["--category-limit-divisor", str(category_limit_divisor)])
     if args.exclude_file:
         command.extend(["--exclude-file", args.exclude_file])
     if args.proxy:
@@ -164,7 +203,8 @@ def run_parallel_discovery(args, crawl, combined_file, shard_count=None):
     def run_shard(index):
         command = build_command(
             args, crawl, shard_files[index], per_category_limit=per_shard_limit,
-            discovery_only=True, part_shard=f"{index}/{shard_count}")
+            discovery_only=True, part_shard=f"{index}/{shard_count}",
+            category_limit_divisor=(shard_count if args.category_limits else 1))
         return subprocess.run(command).returncode
 
     print(f"[multi] parallel discovery {crawl}: shards={shard_count}, "
@@ -176,7 +216,7 @@ def run_parallel_discovery(args, crawl, combined_file, shard_count=None):
     merged = merge_candidate_files(shard_files, combined_file)
     print(f"[multi] merged {merged} unique candidates for {crawl}", flush=True)
     if all(discovery_state_complete(path, args.max_parts) for path in shard_files):
-        mark_discovery_complete(combined_file)
+        mark_discovery_complete(combined_file, run_identity(args, crawl))
     else:
         print(f"[multi] {crawl} has retryable unscanned parts; completion marker "
               "not written", flush=True)
@@ -202,13 +242,27 @@ def run(args):
         candidates_file = os.path.join(args.state_dir, f"{crawl}.jsonl")
         print(f"[multi] starting {crawl}: current={current}, "
               f"need={args.target_total - current}", flush=True)
-        marker_exists = os.path.exists(discovery_marker(candidates_file))
+        identity = run_identity(args, crawl)
+        marker_identity = read_discovery_marker(candidates_file)
+        marker_exists = marker_identity is not None
+        if marker_identity and marker_identity != identity:
+            print(
+                f"[multi] checkpoint ruleset mismatch for {crawl}; "
+                "use the original taxonomy/profile or a new --state-dir "
+                "for an explicit backfill",
+                flush=True,
+            )
+            return 2
         combined_state_exists = os.path.exists(candidates_file + ".state.json")
         combined_complete = discovery_state_complete(candidates_file, args.max_parts)
 
         if marker_exists or combined_complete:
             if combined_complete and not marker_exists:
-                mark_discovery_complete(candidates_file)
+                with open(candidates_file + ".state.json", encoding="utf-8") as source:
+                    combined_state = json.load(source)
+                state_identity = combined_state.get("checkpoint_identity")
+                mark_discovery_complete(
+                    candidates_file, identity if state_identity else None)
             print(f"[multi] discovery already complete for {crawl}; "
                   f"reusing {candidates_file}", flush=True)
             code = subprocess.run(build_command(
@@ -221,7 +275,7 @@ def run(args):
                   flush=True)
             code = subprocess.run(build_command(args, crawl, candidates_file)).returncode
             if not code and discovery_state_complete(candidates_file, args.max_parts):
-                mark_discovery_complete(candidates_file)
+                mark_discovery_complete(candidates_file, identity)
         elif args.discovery_shards > 1 or existing_shard_count(args.state_dir, crawl):
             resume_shards = existing_shard_count(args.state_dir, crawl)
             if resume_shards and resume_shards != args.discovery_shards:
@@ -256,7 +310,17 @@ def main():
                         help="Explicit ordered crawl IDs; default is latest from collinfo.json")
     parser.add_argument("--state-dir", default="crawl_states")
     parser.add_argument("--categories-file", default="categories.json")
+    parser.add_argument("--category-limits")
+    parser.add_argument("--discovery-profile", choices=["precise", "broad"],
+                        default="precise")
+    parser.add_argument("--broad-quota-fraction", type=float, default=0.25,
+                        help="Maximum share of each category filled by broad-only URLs")
+    parser.add_argument("--broad-index-sample", type=float, default=0.02,
+                        help="Deterministic share of broad-only index matches to rank/fetch")
     parser.add_argument("--footprints")
+    parser.add_argument(
+        "--pattern-priorities",
+        help="Optional JSON generated by feedback_report.py; affects fetch order only")
     parser.add_argument("--per-category-limit", type=int, default=5000)
     parser.add_argument("--db", default="prospects.db")
     parser.add_argument("--min-score", type=int, default=50)
@@ -267,11 +331,21 @@ def main():
                         help="Parallel non-overlapping Parquet discovery workers; "
                              "0 selects min(CPUs, 4)")
     parser.add_argument("--source", choices=["cloudfront", "s3"], default="s3")
+    parser.add_argument(
+        "--index-source", choices=["auto", "https", "s3"], default="auto",
+        help="Where DuckDB reads the Parquet index; auto uses S3 with --source s3")
     parser.add_argument("--progress-interval", type=float, default=60)
+    parser.add_argument(
+        "--discovery-metrics", action="store_true",
+        help="Persist optional Parquet row counts and discovery-funnel counters")
     parser.add_argument("--exclude-file")
     parser.add_argument("--proxy")
     parser.add_argument("--proxy-file")
     args = parser.parse_args()
+    if not 0.0 <= args.broad_quota_fraction <= 1.0:
+        parser.error("--broad-quota-fraction must be between 0 and 1")
+    if not 0.0 <= args.broad_index_sample <= 1.0:
+        parser.error("--broad-index-sample must be between 0 and 1")
     raise SystemExit(run(args))
 
 
