@@ -84,6 +84,41 @@ class ColumnarIndexSourceTests(unittest.TestCase):
             self.assertEqual(urls[0], "https://c.test/bitrix/redirect.php?goto=x")
             self.assertEqual(urls[-1], "https://b.test/community/1")
 
+    def test_feedback_profile_reorders_existing_manifest_without_rescan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "manifest.jsonl")
+            with open(path, "w", encoding="utf-8") as output:
+                for record in [
+                    {
+                        "url": "https://weak.test/forum",
+                        "bucket": "latam",
+                        "discovery_tier": 0,
+                        "prefetch_score": 60,
+                        "pattern_id": "rule:weak",
+                    },
+                    {
+                        "url": "https://good.test/forum",
+                        "bucket": "latam",
+                        "discovery_tier": 0,
+                        "prefetch_score": 55,
+                        "pattern_id": "rule:good",
+                    },
+                ]:
+                    output.write(json.dumps(record) + "\n")
+            profile = {
+                "patterns": {
+                    "rule:weak": {"score_adjustment": -10},
+                    "rule:good": {"score_adjustment": 10},
+                },
+                "pattern_buckets": {},
+            }
+            urls = [
+                record["url"] for record in load_candidates_prioritized(
+                    path, priority_profile=profile
+                )
+            ]
+            self.assertEqual(urls[0], "https://good.test/forum")
+
     def test_checkpoint_identity_rejects_silent_ruleset_change(self):
         expected = {
             "crawl": "CC-A",

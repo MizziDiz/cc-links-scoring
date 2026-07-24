@@ -569,7 +569,8 @@ def load_candidates_shuffled(path: str, seed: int = 42):
             yield json.loads(line)
 
 
-def load_candidates_prioritized(path: str, seed: int = 42):
+def load_candidates_prioritized(
+        path: str, seed: int = 42, priority_profile=None):
     """Prioritize precise/high-score candidates, randomizing ties deterministically.
 
     Legacy manifests without prefetch metadata retain the old shuffled behavior.
@@ -579,6 +580,10 @@ def load_candidates_prioritized(path: str, seed: int = 42):
 
     ranked = []
     rng = random.Random(seed)
+    adjustment_fn = None
+    if priority_profile:
+        from cc_links.feedback import priority_adjustment
+        adjustment_fn = priority_adjustment
     with open(path, "rb") as source:
         while True:
             position = source.tell()
@@ -593,6 +598,12 @@ def load_candidates_prioritized(path: str, seed: int = 42):
                 continue
             tier = int(record.get("discovery_tier", 0))
             score = int(record.get("prefetch_score", 0))
+            if adjustment_fn:
+                score += adjustment_fn(
+                    priority_profile,
+                    str(record.get("pattern_id", "")),
+                    record.get("bucket"),
+                )
             ranked.append((tier, -score, rng.random(), position))
     ranked.sort()
 
