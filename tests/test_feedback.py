@@ -95,7 +95,6 @@ class PatternFeedbackTests(unittest.TestCase):
                 "url_host_registered_domain": "example.test",
                 "bucket": "latam",
                 "discovery_tier": 0,
-                "pattern_id": "rule:forum",
             }) + "\n", encoding="utf-8")
 
             report = collect_pattern_feedback(
@@ -103,7 +102,10 @@ class PatternFeedbackTests(unittest.TestCase):
                 manifest_paths=[str(manifest)],
             )
             self.assertEqual(report["summary"]["attributed_decisions"], 1)
-            self.assertEqual(report["patterns"]["rule:forum"]["qualified"], 1)
+            self.assertEqual(len(report["patterns"]), 1)
+            self.assertEqual(
+                next(iter(report["patterns"].values()))["qualified"], 1
+            )
             # The source DB remains on its legacy schema.
             conn = sqlite3.connect(db)
             self.assertNotIn(

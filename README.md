@@ -135,7 +135,9 @@ python multi_crawl.py --target-total 100000 \
 выход по `pattern_id × discovery_tier × bucket`: число решений, долю
 `stored/domain_cap`, уникальные домены, средний score и retryable fetch-ошибки.
 `--manifest` нужен только старым БД без attribution-колонок; новые запуски
-сохраняют эти поля непосредственно в `processed_urls`.
+сохраняют эти поля непосредственно в `processed_urls`. Если legacy-manifest
+содержит tier, но ещё не содержит `pattern_id`, отчёт восстанавливает его из
+URL текущей версией таксономии и не меняет исходные файлы.
 Вес ограничен диапазоном ±15 и влияет только на порядок WARC-fetch. Он не
 заменяет финальную HTML-классификацию, не понижает `--min-score` и не меняет
 лимит `--max-per-domain 10`. Паттерны с выборкой меньше `--minimum-samples`

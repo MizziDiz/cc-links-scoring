@@ -7,7 +7,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Iterable
 
-from cc_links.prospects import normalize_url
+from cc_links.prospects import classify_discovery_url, normalize_url
 
 QUALIFIED_OUTCOMES = ("stored", "domain_cap")
 DECISION_OUTCOMES = ("stored", "domain_cap", "unmatched", "below_threshold")
@@ -78,12 +78,19 @@ def collect_pattern_feedback(
                             KeyError, TypeError, ValueError, json.JSONDecodeError
                         ):
                             continue
+                        pattern_id = record.get("pattern_id")
+                        if not pattern_id:
+                            evidence = classify_discovery_url(
+                                str(record["url"]), include_broad=True
+                            )
+                            if evidence:
+                                pattern_id = evidence[0].pattern_id
                         pending.append((
                             normalized,
                             record.get("url_host_registered_domain"),
                             record.get("bucket"),
                             record.get("discovery_tier"),
-                            record.get("pattern_id"),
+                            pattern_id,
                         ))
                         if len(pending) >= 1_000:
                             conn.executemany(
