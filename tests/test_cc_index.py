@@ -15,7 +15,8 @@ try:
 except ModuleNotFoundError:
     sys.modules["requests"] = Mock()
 
-from cc_links.cc_index import (_save_state, _validate_checkpoint_identity,
+from cc_links.cc_index import (_parquet_row_count, _save_state,
+                               _validate_checkpoint_identity,
                                get_index_parts,
                                load_candidates_prioritized)
 
@@ -64,6 +65,18 @@ class ColumnarIndexSourceTests(unittest.TestCase):
                 state = json.load(source)
             self.assertEqual(state["broad_remaining"], {"Example": 2})
             self.assertEqual(state["metrics"]["index_rows_scanned"], 123)
+
+    def test_parquet_row_count_uses_file_metadata_column(self):
+        connection = Mock()
+        connection.execute.return_value.fetchone.return_value = (123456,)
+        self.assertEqual(
+            _parquet_row_count(connection, "s3://example/part.parquet"),
+            123456,
+        )
+        sql, parameters = connection.execute.call_args.args
+        self.assertIn("SUM(num_rows)", sql)
+        self.assertNotIn("row_group_num_rows", sql)
+        self.assertEqual(parameters, ["s3://example/part.parquet"])
 
     def test_prefetch_priority_orders_precise_before_broad(self):
         with tempfile.TemporaryDirectory() as tmp:

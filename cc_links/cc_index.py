@@ -127,7 +127,7 @@ def _save_state(state_path, scanned_parts, remaining, domain_counts,
 def _parquet_row_count(con, part_url: str) -> int:
     """Read a Parquet part's row count from footer metadata without scanning columns."""
     row = con.execute(
-        "SELECT COALESCE(SUM(row_group_num_rows), 0) "
+        "SELECT COALESCE(SUM(num_rows), 0) "
         "FROM parquet_file_metadata(?)",
         [part_url],
     ).fetchone()
