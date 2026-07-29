@@ -10,6 +10,8 @@ __pycache__/
 latam_urls_*.txt
 quality_sample*.csv
 crawl_states/
+data/ops/
+.env
 
 # Real proxy credentials -- never commit
 proxies.txt

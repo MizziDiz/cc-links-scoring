@@ -429,7 +429,7 @@ turn a lexical false positive into an approved prospect.
 - Work is developed on a dedicated feature branch and reviewed through a PR.
 - The existing collector, release branch, production database and checkpoints
   are not modified by pilot runs.
-- Runtime inputs and outputs live under a gitignored operations directory.
+- Runtime inputs and outputs live under the gitignored `data/ops/` directory.
 - Competitor lists, private taxonomies and live results are not committed.
 - No IP addresses, hostnames, instance roles, credentials, tokens or private
   paths are committed.

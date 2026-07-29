@@ -112,7 +112,7 @@ python validate_sample.py --input quality_sample.csv \
 ```bash
 python pipeline.py outreach partmap \
   --crawl CC-MAIN-2026-30 \
-  --out data/outreach/CC-MAIN-2026-30.partmap.json
+  --out data/ops/outreach/CC-MAIN-2026-30.partmap.json
 ```
 
 Карта строится для всех index parts один раз и позволяет целевому ccTLD-пилоту
@@ -125,11 +125,11 @@ URL-only пилот на `co`, `mx`, `cl`:
 python pipeline.py outreach discover \
   --crawl CC-MAIN-2026-30 \
   --tlds co mx cl \
-  --part-map data/outreach/CC-MAIN-2026-30.partmap.json \
+  --part-map data/ops/outreach/CC-MAIN-2026-30.partmap.json \
   --max-parts 10 \
   --max-per-domain 2 \
-  --out data/outreach/pilot.jsonl \
-  --db data/outreach/pilot.db
+  --out data/ops/outreach/pilot.jsonl \
+  --db data/ops/outreach/pilot.db
 ```
 
 Discovery фильтрует колонку `url_path`, сохраняет отдельную outreach SQLite и
@@ -141,21 +141,21 @@ per-part JSONL-фрагменты. WARC и HTML на этом этапе не с
 
 ```bash
 python pipeline.py outreach report \
-  --db data/outreach/pilot.db \
-  --out data/outreach/pilot-report.json
+  --db data/ops/outreach/pilot.db \
+  --out data/ops/outreach/pilot-report.json
 
 python pipeline.py outreach sample \
-  --db data/outreach/pilot.db \
+  --db data/ops/outreach/pilot.db \
   --size 50 \
-  --out data/outreach/pilot-review.csv
+  --out data/ops/outreach/pilot-review.csv
 ```
 
 После заполнения колонок `label` (`relevant`, `noise`, `uncertain`) и `reason`:
 
 ```bash
 python pipeline.py outreach audit \
-  --input data/outreach/pilot-review.csv \
-  --out data/outreach/pilot-audit.json
+  --input data/ops/outreach/pilot-review.csv \
+  --out data/ops/outreach/pilot-audit.json
 ```
 
 Полный discovery не запускается, пока audit gate не подтвердит не менее 40
