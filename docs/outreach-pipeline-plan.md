@@ -1,6 +1,6 @@
 # Outreach discovery and donor qualification
 
-Status: implementation plan
+Status: URL-only pilot implementation in progress
 Scope: optional pipeline alongside the existing Common Crawl prospect collector
 Production invariant: the running prospect collection, its database, checkpoints,
 domain cap, scoring and default CLI behavior are not changed by this work.
@@ -29,7 +29,7 @@ those page families.
 | Discovery only filters by TLD, HTTP status and MIME type | Adaptive discovery already applies URL footprints, precise/broad tiers, prefetch score, feedback priorities and per-domain caps | Reuse the streaming and checkpoint machinery, but do not reuse the existing prospect taxonomy |
 | Add URL filtering | Filtering exists on `LOWER(url)` | Add outreach-specific filtering on `url_path` with segment-boundary semantics |
 | Build a map from `url_surtkey` ranges to Parquet parts | No such map exists; parts are sampled or sharded by ordinal position | Add a conservative, crawl-specific part map |
-| Save one row per domain | Existing tables are URL/page oriented | Preserve all matched pages for audit and maintain a separate best prospect row per registered domain |
+| Save one row per domain | Existing tables are URL/page oriented | Preserve retained URL evidence under the outreach cap and maintain a separate best prospect row per registered domain |
 | Limit to one or two pages per domain | Existing collection cap is ten | Add an independent outreach cap, default two; do not change the existing cap |
 | Use the cc-index for competitor backlink intersections | The cc-index has page records, not a reverse domain link graph | Use the Common Crawl Domain Web Graph as a later stage |
 | Use `n_hosts` as a PBN detector | `n_hosts` is not a calibrated PBN label | Treat it only as a weak anomaly or multi-tenant signal |
@@ -71,8 +71,8 @@ The planned additions are:
 - `cc_links/outreach_live.py`: optional polite live-site qualification;
 - `cc_links/outreach_patterns.json`: versioned, reviewable pattern registry;
 - `pipeline.py outreach ...`: optional CLI entry point;
-- `sample_outreach.py`: deterministic manual-review sample;
-- `analyze_outreach.py`: yield, noise, pattern, language and geo reports.
+- `cc_links/outreach_report.py`: deterministic manual-review sample, yield,
+  noise, pattern, language and geo reports.
 
 No new command becomes the default path.
 
@@ -245,7 +245,7 @@ Use a separate database, for example `outreach.db`.
 
 ```sql
 CREATE TABLE outreach_pages (
-    url TEXT PRIMARY KEY,
+    url TEXT NOT NULL,
     registered_domain TEXT NOT NULL,
     tld TEXT,
     language TEXT,
@@ -257,7 +257,8 @@ CREATE TABLE outreach_pages (
     warc_filename TEXT,
     warc_record_offset INTEGER,
     warc_record_length INTEGER,
-    discovered_at TEXT NOT NULL
+    discovered_at TEXT NOT NULL,
+    PRIMARY KEY (url, crawl)
 );
 ```
 

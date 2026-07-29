@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "patterns": [
+    {
+      "id": "en.write_for_us",
+      "language": "en",
+      "scope": "path_segment",
+      "expressions": [
+        "write-for-us",
+        "write_for_us"
+      ],
+      "weight": 100
+    },
+    {
+      "id": "en.guest_post_guidelines",
+      "language": "en",
+      "scope": "path_segment",
+      "expressions": [
+        "guest-post-guidelines",
+        "guest-blogging-guidelines"
+      ],
+      "weight": 98
+    },
+    {
+      "id": "en.submit_article",
+      "language": "en",
+      "scope": "path_segment",
+      "expressions": [
+        "submit-an-article",
+        "submit-article"
+      ],
+      "weight": 96
+    },
+    {
+      "id": "en.become_contributor",
+      "language": "en",
+      "scope": "path_segment",
+      "expressions": [
+        "become-a-contributor",
+        "contributor-guidelines"
+      ],
+      "weight": 92
+    },
+    {
+      "id": "es.escribe_para_nosotros",
+      "language": "es",
+      "scope": "path_segment",
+      "expressions": [
+        "escribe-para-nosotros",
+        "escribir-para-nosotros"
+      ],
+      "weight": 100
+    },
+    {
+      "id": "es.colabora_con_nosotros",
+      "language": "es",
+      "scope": "path_segment",
+      "expressions": [
+        "colabora-con-nosotros",
+        "publica-con-nosotros"
+      ],
+      "weight": 96
+    },
+    {
+      "id": "es.enviar_articulo",
+      "language": "es",
+      "scope": "path_segment",
+      "expressions": [
+        "enviar-articulo",
+        "envia-tu-articulo"
+      ],
+      "weight": 94
+    },
+    {
+      "id": "es.guia_autores",
+      "language": "es",
+      "scope": "path_segment",
+      "expressions": [
+        "guia-para-autores",
+        "normas-de-publicacion"
+      ],
+      "weight": 88
+    },
+    {
+      "id": "pt.escreva_para_nos",
+      "language": "pt",
+      "scope": "path_segment",
+      "expressions": [
+        "escreva-para-nos",
+        "escreva-conosco"
+      ],
+      "weight": 100
+    },
+    {
+      "id": "pt.colabore_conosco",
+      "language": "pt",
+      "scope": "path_segment",
+      "expressions": [
+        "colabore-conosco",
+        "publique-conosco"
+      ],
+      "weight": 96
+    },
+    {
+      "id": "pt.envie_artigo",
+      "language": "pt",
+      "scope": "path_segment",
+      "expressions": [
+        "envie-seu-artigo",
+        "envie-um-artigo"
+      ],
+      "weight": 94
+    },
+    {
+      "id": "pt.guia_autores",
+      "language": "pt",
+      "scope": "path_segment",
+      "expressions": [
+        "guia-para-autores",
+        "diretrizes-para-autores"
+      ],
+      "weight": 88
+    }
+  ]
+}

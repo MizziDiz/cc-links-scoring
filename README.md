@@ -77,6 +77,70 @@ python validate_sample.py --input quality_sample.csv \
     --out quality_sample_validated.csv --workers 20
 ```
 
+## Outreach URL pilot (опционально)
+
+Новый режим `pipeline.py outreach` ищет в Common Crawl страницы-приглашения
+для гостевых авторов. Он работает отдельно от `prospect_pipeline.py`: не
+меняет таблицу `candidates`, её score, лимит 10 и текущий путь сбора.
+
+Сначала постройте карту диапазонов `url_surtkey` для выбранного crawl:
+
+```bash
+python pipeline.py outreach partmap \
+  --crawl CC-MAIN-2026-30 \
+  --out data/outreach/CC-MAIN-2026-30.partmap.json
+```
+
+Карта строится для всех index parts один раз и позволяет целевому ccTLD-пилоту
+не читать части, диапазоны которых точно не пересекаются с нужными TLD.
+Неизвестные или некорректные диапазоны никогда не отбрасываются.
+
+URL-only пилот на `co`, `mx`, `cl`:
+
+```bash
+python pipeline.py outreach discover \
+  --crawl CC-MAIN-2026-30 \
+  --tlds co mx cl \
+  --part-map data/outreach/CC-MAIN-2026-30.partmap.json \
+  --max-parts 10 \
+  --max-per-domain 2 \
+  --out data/outreach/pilot.jsonl \
+  --db data/outreach/pilot.db
+```
+
+Discovery фильтрует колонку `url_path`, сохраняет отдельную outreach SQLite и
+per-part JSONL-фрагменты. WARC и HTML на этом этапе не скачиваются. Готовый
+фрагмент является recovery checkpoint: после сбоя он импортируется без
+повторного чтения соответствующего Parquet.
+
+Отчёт и стратифицированная ручная выборка:
+
+```bash
+python pipeline.py outreach report \
+  --db data/outreach/pilot.db \
+  --out data/outreach/pilot-report.json
+
+python pipeline.py outreach sample \
+  --db data/outreach/pilot.db \
+  --size 50 \
+  --out data/outreach/pilot-review.csv
+```
+
+После заполнения колонок `label` (`relevant`, `noise`, `uncertain`) и `reason`:
+
+```bash
+python pipeline.py outreach audit \
+  --input data/outreach/pilot-review.csv \
+  --out data/outreach/pilot-audit.json
+```
+
+Полный discovery не запускается, пока audit gate не подтвердит не менее 40
+решительных оценок, общий шум ниже 20% и отсутствие паттерна с шумом выше 30%.
+Для подробного журнала установите `LOG_LEVEL=DEBUG`.
+
+Архитектура, инварианты и последующие этапы Web Graph/live qualification
+описаны в `docs/outreach-pipeline-plan.md`.
+
 ## Установка
 
 ```
