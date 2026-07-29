@@ -49,6 +49,18 @@ def add_outreach_parser(subparsers: Any) -> argparse.ArgumentParser:
     partmap.add_argument("--out", required=True)
     partmap.add_argument("--no-resume", action="store_true")
     partmap.add_argument("--max-retries", type=int, default=3)
+    partmap.add_argument(
+        "--index-source",
+        choices=["https", "s3"],
+        default="https",
+        help="Read Parquet via public HTTPS or the Common Crawl S3 bucket",
+    )
+    partmap.add_argument(
+        "--reconnect-every",
+        type=int,
+        default=15,
+        help="Recycle the DuckDB connection after this many mapped parts",
+    )
 
     discover = commands.add_parser(
         "discover", help="Run URL-only outreach discovery over selected index parts"
@@ -107,8 +119,10 @@ def run_outreach_command(args: argparse.Namespace) -> None:
         payload = build_part_map(
             args.crawl,
             args.out,
+            index_source=args.index_source,
             resume=not args.no_resume,
             max_retries=args.max_retries,
+            reconnect_every=args.reconnect_every,
             progress=LOGGER.info,
         )
         LOGGER.info("part map complete: %d parts", len(payload["parts"]))

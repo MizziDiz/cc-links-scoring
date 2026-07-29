@@ -227,8 +227,10 @@ def build_part_map(
     out_path: str | Path,
     *,
     part_urls: Optional[Sequence[str]] = None,
+    index_source: str = "https",
     resume: bool = True,
     max_retries: int = 3,
+    reconnect_every: int = 15,
     connection_factory: Optional[Callable[[], Any]] = None,
     retry_exceptions: tuple[type[BaseException], ...] = (duckdb.Error,),
     progress: Optional[Callable[[str], None]] = None,
@@ -240,15 +242,26 @@ def build_part_map(
     """
     if max_retries < 1:
         raise ValueError("max_retries must be at least one")
-    urls = list(part_urls) if part_urls is not None else get_index_parts(crawl)
+    if reconnect_every < 1:
+        raise ValueError("reconnect_every must be at least one")
+    if index_source not in {"https", "s3"}:
+        raise ValueError(f"unsupported index source: {index_source}")
+    urls = (
+        list(part_urls)
+        if part_urls is not None
+        else get_index_parts(crawl, index_source=index_source)
+    )
     if not urls:
         raise PartMapError(f"no WARC index parts found for {crawl}")
 
     target = Path(out_path)
     state_path = target.with_name(target.name + ".state.json")
     completed = _load_progress(state_path, crawl, urls) if resume else {}
-    make_connection = connection_factory or _connect
+    make_connection = connection_factory or (
+        lambda: _connect(index_source=index_source)
+    )
     connection: Any = None
+    mapped_on_connection = 0
 
     try:
         for index, part_url in enumerate(urls):
@@ -274,10 +287,21 @@ def build_part_map(
                     )
                     completed[part_url] = part_range
                     _atomic_save_progress(state_path, crawl, urls, completed)
+                    mapped_on_connection += 1
                     if progress:
                         progress(
                             f"part {index + 1}/{len(urls)} mapped: {part_range.part}"
                         )
+                    if mapped_on_connection >= reconnect_every:
+                        try:
+                            connection.close()
+                        except duckdb.Error:
+                            LOGGER.debug(
+                                "failed to close recycled DuckDB connection",
+                                exc_info=True,
+                            )
+                        connection = None
+                        mapped_on_connection = 0
                     break
                 except retry_exceptions as exc:
                     last_error = exc
@@ -296,6 +320,7 @@ def build_part_map(
                                 "failed to close DuckDB connection", exc_info=True
                             )
                         connection = None
+                        mapped_on_connection = 0
             else:
                 raise PartMapError(
                     f"failed to map {_part_name(part_url)} after "
@@ -303,12 +328,15 @@ def build_part_map(
                 ) from last_error
     finally:
         if connection is not None:
-            connection.close()
+            try:
+                connection.close()
+            except duckdb.Error:
+                LOGGER.debug("failed to close DuckDB connection", exc_info=True)
 
     payload: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "crawl": crawl,
-        "index_source": "https",
+        "index_source": index_source,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "parts": [asdict(completed[url]) for url in urls],
     }

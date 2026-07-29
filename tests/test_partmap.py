@@ -137,6 +137,43 @@ class PartMapTests(unittest.TestCase):
             self.assertFalse(Path(str(path) + ".state.json").exists())
             self.assertTrue(connection.closed)
 
+    def test_builder_recycles_connections_and_records_index_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "map.json"
+            connections = [
+                FakeConnection([("cl,a", "cl,z", 10)]),
+                FakeConnection([("mx,a", "mx,z", 20)]),
+            ]
+            payload = build_part_map(
+                "CC-TEST",
+                path,
+                part_urls=["s3://example/a.parquet", "s3://example/b.parquet"],
+                index_source="s3",
+                reconnect_every=1,
+                connection_factory=lambda: connections.pop(0),
+            )
+            self.assertEqual(payload["index_source"], "s3")
+            self.assertEqual(payload["parts"][1]["row_count"], 20)
+            self.assertEqual(connections, [])
+
+    def test_builder_validates_source_and_reconnect_interval(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "map.json"
+            with self.assertRaises(ValueError):
+                build_part_map(
+                    "CC-TEST",
+                    path,
+                    part_urls=["https://example/a.parquet"],
+                    index_source="ftp",
+                )
+            with self.assertRaises(ValueError):
+                build_part_map(
+                    "CC-TEST",
+                    path,
+                    part_urls=["https://example/a.parquet"],
+                    reconnect_every=0,
+                )
+
     def test_failed_part_is_not_checkpointed(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "map.json"
