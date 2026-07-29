@@ -34,6 +34,7 @@ from cc_links.partmap import load_part_map, select_parts, surt_prefix_for_tld
 
 LOGGER = logging.getLogger(__name__)
 STATE_SCHEMA_VERSION = 1
+QUERY_SCHEMA_VERSION = 1
 
 
 class OutreachDiscoveryError(RuntimeError):
@@ -200,7 +201,8 @@ def _discovery_query(part_url: str, tlds: Sequence[str], discovery_regex: str) -
     regex_sql = _sql_literal(discovery_regex)
     return f"""
         SELECT url, url_path, url_host_registered_domain, url_host_tld,
-               content_languages, fetch_time, warc_filename,
+               content_languages, CAST(fetch_time AS VARCHAR) AS fetch_time,
+               warc_filename,
                warc_record_offset, warc_record_length
         FROM read_parquet({part_sql})
         WHERE url_host_tld IN ({tld_sql})
@@ -240,6 +242,7 @@ def _record_from_row(
     return {
         "url": str(url),
         "crawl": crawl,
+        "query_schema_version": QUERY_SCHEMA_VERSION,
         "url_path": str(url_path),
         "registered_domain": str(registered_domain).lower(),
         "tld": None if tld is None else str(tld).lower(),
@@ -413,6 +416,13 @@ def discover_outreach(
                     break
                 except retry_exceptions as exc:
                     last_error = exc
+                    LOGGER.warning(
+                        "outreach query failed for %s (attempt %d/%d): %s",
+                        _part_name(part_url),
+                        attempt,
+                        max_retries,
+                        exc,
+                    )
                     if temporary.exists():
                         temporary.unlink()
                     # A driver error may happen after some rows were written.
@@ -439,6 +449,7 @@ def discover_outreach(
                 failed[part_url] = {
                     "attempts": max_retries,
                     "error": type(last_error).__name__ if last_error else "unknown",
+                    "message": str(last_error)[:500] if last_error else "",
                 }
                 state["failed_parts"] = failed
                 _atomic_json(state_path, state)

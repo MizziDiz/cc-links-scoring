@@ -111,6 +111,7 @@ class OutreachDiscoveryTests(unittest.TestCase):
             )
             self.assertEqual(spanish["pattern_language"], "es")
             self.assertIn("LOWER(COALESCE(url_path", fake.queries[0])
+            self.assertIn("CAST(fetch_time AS VARCHAR)", fake.queries[0])
 
     def test_completed_spool_is_recovered_without_parquet_query(self):
         with tempfile.TemporaryDirectory() as tmp:
