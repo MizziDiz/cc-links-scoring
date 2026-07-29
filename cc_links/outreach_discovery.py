@@ -92,6 +92,7 @@ def _select_part_urls(
     part_urls: Optional[Sequence[str]],
     max_parts: Optional[int],
     part_shard: Optional[tuple[int, int]],
+    index_source: str,
 ) -> list[str]:
     if part_urls is not None:
         selected = list(part_urls)
@@ -103,7 +104,7 @@ def _select_part_urls(
             )
         selected = [row.part_url for row in select_parts(part_map, tlds)]
     else:
-        selected = list(get_index_parts(crawl))
+        selected = list(get_index_parts(crawl, index_source=index_source))
 
     if max_parts is not None:
         if max_parts < 1:
@@ -123,6 +124,17 @@ def _select_part_urls(
     if not selected:
         raise OutreachDiscoveryError("no Parquet parts selected")
     return selected
+
+
+def _infer_index_source(part_urls: Sequence[str]) -> str:
+    """Infer one DuckDB index source from a homogeneous part list."""
+    sources = {
+        "s3" if urlsplit(part_url).scheme.lower() == "s3" else "https"
+        for part_url in part_urls
+    }
+    if len(sources) != 1:
+        raise OutreachDiscoveryError("selected parts mix S3 and HTTPS sources")
+    return sources.pop()
 
 
 def _load_state(path: Path, identity: Mapping[str, Any]) -> dict[str, Any]:
@@ -273,6 +285,8 @@ def discover_outreach(
     max_parts: Optional[int] = None,
     max_per_domain: int = 2,
     part_shard: Optional[tuple[int, int]] = None,
+    index_source: str = "auto",
+    reconnect_every: int = 15,
     resume: bool = True,
     max_retries: int = 3,
     retry_backoff: float = 2.0,
@@ -290,6 +304,10 @@ def discover_outreach(
     """
     if max_per_domain < 1:
         raise ValueError("max_per_domain must be at least one")
+    if index_source not in {"auto", "https", "s3"}:
+        raise ValueError(f"unsupported index source: {index_source}")
+    if reconnect_every < 1:
+        raise ValueError("reconnect_every must be at least one")
     if max_retries < 1:
         raise ValueError("max_retries must be at least one")
     if fetch_batch_size < 1:
@@ -304,13 +322,25 @@ def discover_outreach(
         surt_prefix_for_tld(tld)
     patterns = load_outreach_patterns(patterns_path)
     selected_parts = _select_part_urls(
-        crawl, normalized_tlds, part_map_path, part_urls, max_parts, part_shard
+        crawl,
+        normalized_tlds,
+        part_map_path,
+        part_urls,
+        max_parts,
+        part_shard,
+        "https" if index_source == "auto" else index_source,
+    )
+    resolved_index_source = (
+        _infer_index_source(selected_parts)
+        if index_source == "auto"
+        else index_source
     )
     pattern_digest = pattern_registry_digest(patterns)
     identity = {
         "crawl": crawl,
         "tlds": normalized_tlds,
         "part_urls": selected_parts,
+        "index_source": resolved_index_source,
         "pattern_digest": pattern_digest,
         "max_per_domain": max_per_domain,
         "part_shard": list(part_shard) if part_shard is not None else None,
@@ -340,8 +370,11 @@ def discover_outreach(
         )
     }
     discovery_regex = compile_discovery_regex(patterns)
-    make_connection = connection_factory or _connect
+    make_connection = connection_factory or (
+        lambda: _connect(index_source=resolved_index_source)
+    )
     parquet_connection: Any = None
+    completed_on_connection = 0
 
     try:
         for index, part_url in enumerate(selected_parts):
@@ -469,6 +502,7 @@ def discover_outreach(
 
             inserted = _import_spool(connection, spool, max_per_domain)
             completed.add(part_url)
+            completed_on_connection += 1
             failed.pop(part_url, None)
             state["matched_rows"] = (
                 int(state.get("matched_rows", 0)) + matched_this_part
@@ -483,6 +517,17 @@ def discover_outreach(
                     f"part {index + 1}/{len(selected_parts)}: "
                     f"{matched_this_part} matched, {inserted} inserted"
                 )
+            if completed_on_connection >= reconnect_every:
+                if parquet_connection is not None:
+                    try:
+                        parquet_connection.close()
+                    except duckdb.Error:
+                        LOGGER.debug(
+                            "failed to close recycled DuckDB connection",
+                            exc_info=True,
+                        )
+                    parquet_connection = None
+                completed_on_connection = 0
     finally:
         if parquet_connection is not None:
             parquet_connection.close()

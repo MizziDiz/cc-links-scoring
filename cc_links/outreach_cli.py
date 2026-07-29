@@ -74,6 +74,18 @@ def add_outreach_parser(subparsers: Any) -> argparse.ArgumentParser:
     discover.add_argument("--max-parts", type=int)
     discover.add_argument("--max-per-domain", type=int, default=2)
     discover.add_argument("--shard", type=_parse_shard)
+    discover.add_argument(
+        "--index-source",
+        choices=["auto", "https", "s3"],
+        default="auto",
+        help="DuckDB Parquet source; auto infers it from the selected parts",
+    )
+    discover.add_argument(
+        "--reconnect-every",
+        type=int,
+        default=15,
+        help="Recycle the DuckDB connection after this many completed parts",
+    )
     discover.add_argument("--no-resume", action="store_true")
     discover.add_argument("--max-retries", type=int, default=3)
     discover.add_argument("--retry-backoff", type=float, default=2.0)
@@ -139,6 +151,8 @@ def run_outreach_command(args: argparse.Namespace) -> None:
             max_parts=args.max_parts,
             max_per_domain=args.max_per_domain,
             part_shard=args.shard,
+            index_source=args.index_source,
+            reconnect_every=args.reconnect_every,
             resume=not args.no_resume,
             max_retries=args.max_retries,
             retry_backoff=args.retry_backoff,

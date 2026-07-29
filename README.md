@@ -137,6 +137,11 @@ python pipeline.py outreach discover \
   --db data/ops/outreach/pilot.db
 ```
 
+`outreach discover` по умолчанию выводит источник из выбранных part URLs:
+S3-карта включает S3-доступ через runtime identity, HTTPS-карта остаётся на
+публичном endpoint. Источник можно зафиксировать через `--index-source`, а
+ротация длинного прохода управляется `--reconnect-every`.
+
 Discovery фильтрует колонку `url_path`, сохраняет отдельную outreach SQLite и
 per-part JSONL-фрагменты. WARC и HTML на этом этапе не скачиваются. Готовый
 фрагмент является recovery checkpoint: после сбоя он импортируется без

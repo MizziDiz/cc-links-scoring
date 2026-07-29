@@ -252,6 +252,52 @@ class OutreachDiscoveryTests(unittest.TestCase):
                     connection_factory=lambda: FakeConnection([[]]),
                 )
 
+    def test_s3_source_is_inferred_and_connections_are_recycled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            connections = [
+                FakeConnection(
+                    [[row("https://one.co/write-for-us", "/write-for-us", "one.co")]]
+                ),
+                FakeConnection(
+                    [[row("https://two.co/write-for-us", "/write-for-us", "two.co")]]
+                ),
+            ]
+            output = root / "out.jsonl"
+            summary = discover_outreach(
+                crawl="CC-TEST",
+                tlds=["co"],
+                out_path=output,
+                db_path=root / "outreach.db",
+                part_urls=[
+                    "s3://example/part-a.parquet",
+                    "s3://example/part-b.parquet",
+                ],
+                reconnect_every=1,
+                connection_factory=lambda: connections.pop(0),
+            )
+            state = json.loads(
+                Path(str(output) + ".state.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(summary.completed_parts, 2)
+            self.assertEqual(state["identity"]["index_source"], "s3")
+            self.assertEqual(connections, [])
+
+    def test_rejects_mixed_part_sources(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with self.assertRaises(OutreachDiscoveryError):
+                discover_outreach(
+                    crawl="CC-TEST",
+                    tlds=["co"],
+                    out_path=root / "out.jsonl",
+                    db_path=root / "outreach.db",
+                    part_urls=[
+                        "s3://example/part-a.parquet",
+                        "https://example/part-b.parquet",
+                    ],
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
