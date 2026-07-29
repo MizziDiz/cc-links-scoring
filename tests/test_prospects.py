@@ -1,13 +1,19 @@
 import json
+import re
 import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 
 from cc_links.db import (enforce_candidate_floor, enforce_domain_cap, init_db,
-                         mark_url_processed, upsert_candidate)
-from cc_links.prospects import (classify_prospect, discovery_url_patterns,
-                                discovery_url_terms, normalize_url)
+                         load_domain_priors, mark_url_processed,
+                         record_fetch_error, upsert_candidate)
+from cc_links.prospects import (broad_discovery_regex, broad_discovery_terms,
+                                classify_discovery_url, classify_prospect,
+                                discovery_url_patterns,
+                                discovery_url_terms, normalize_url,
+                                precise_discovery_regex, taxonomy_hash,
+                                taxonomy_version)
 
 
 class ProspectClassifierTests(unittest.TestCase):
@@ -54,6 +60,47 @@ class ProspectClassifierTests(unittest.TestCase):
         self.assertIn(("/bitrix/redirect.php", "goto="), patterns)
         self.assertNotIn(("goto=",), patterns)
 
+    def test_broad_discovery_regex_includes_structural_fallbacks(self):
+        expression = broad_discovery_regex()
+        self.assertIn("/community/", expression)
+        self.assertIn("/profile/", expression)
+        self.assertIn("viewtopic", expression)
+
+    def test_default_taxonomy_is_versioned_and_hashable(self):
+        self.assertGreaterEqual(taxonomy_version(), 2)
+        self.assertEqual(len(taxonomy_hash()), 16)
+        self.assertIn("/community/", broad_discovery_terms())
+
+    def test_precise_regex_preserves_compound_clauses(self):
+        expression = precise_discovery_regex()
+        self.assertRegex(
+            "https://example.test/redirect.php?x=1&url=https://target.test",
+            expression)
+        self.assertIsNone(re.search(expression, "https://example.test/?goto=alone"))
+
+    def test_prefetch_scoring_attributes_precise_and_broad_urls(self):
+        precise = classify_discovery_url(
+            "https://example.test/bitrix/redirect.php?goto=https://target.test"
+        )
+        self.assertEqual(precise[0].tier, 0)
+        self.assertEqual(precise[0].family, "redirect_backlink")
+        self.assertGreaterEqual(precise[0].score, 60)
+
+        broad = classify_discovery_url(
+            "https://example.test/community/general/topic/7",
+            include_broad=True,
+        )
+        self.assertEqual(broad[0].tier, 1)
+        self.assertEqual(broad[0].family, "")
+        self.assertLess(broad[0].score, 50)
+
+    def test_prefetch_masks_embedded_redirect_target(self):
+        matches = classify_discovery_url(
+            "https://www.google.test/url?q=https://target.test/viewtopic.php?t=7"
+        )
+        self.assertTrue(matches)
+        self.assertTrue(all(match.family == "redirect_backlink" for match in matches))
+
     def test_known_positive_redirect_patterns(self):
         cases = [
             "https://example.vn/index.php?nv=statistics&nv_redirect=aHR0cHM6Ly90LmV4YW1wbGU=",
@@ -85,8 +132,68 @@ class ProspectClassifierTests(unittest.TestCase):
             "<html></html>", "https://example.cn/forum.php?mod=viewthread&tid=7")
         self.assertEqual(discuz[0].platform, "Discuz")
 
+    def test_curated_engine_signatures(self):
+        cases = [
+            (
+                "https://example.test/doku.php?id=start&do=edit",
+                '<div class="dokuwiki" name="dokuwiki__top">',
+                "wiki",
+                "DokuWiki",
+            ),
+            (
+                "https://example.test/components/com_jcomments/",
+                "<script>JCommentsInitializeForm()</script>",
+                "blog_comment",
+                "JComments",
+            ),
+            (
+                "https://example.test/guestbook.php",
+                "Powered by Advanced Guestbook",
+                "guestbook",
+                "Advanced Guestbook",
+            ),
+            (
+                "https://example.test/gallery/photo/1",
+                "Powered by Piwigo — Add a comment",
+                "image_comment",
+                "Piwigo",
+            ),
+        ]
+        for url, html, family, platform in cases:
+            with self.subTest(platform=platform):
+                matches = classify_prospect(html, url)
+                self.assertTrue(
+                    any(
+                        match.family == family and match.platform == platform
+                        for match in matches
+                    ),
+                    (url, matches),
+                )
+
 
 class ProspectDatabaseTests(unittest.TestCase):
+    def test_domain_priors_count_confirmed_candidates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = init_db(str(Path(tmp) / "test.db"))
+            common = dict(
+                domain="example.com", registered_domain="example.com",
+                crawl="CC-TEST", tld="com", country="", bucket="test",
+                family="forum", platform="phpBB", matched_signals="[]",
+                warc_filename="x", warc_offset=1, warc_length=2,
+            )
+            upsert_candidate(
+                conn, normalized_url="https://example.com/1",
+                url="https://example.com/1", score=90, **common)
+            upsert_candidate(
+                conn, normalized_url="https://example.com/2",
+                url="https://example.com/2", score=55, **common)
+            priors = load_domain_priors(conn)
+            self.assertEqual(
+                priors["example.com"],
+                {"candidate_count": 2, "max_score": 90},
+            )
+            conn.close()
+
     def test_upsert_keeps_highest_score(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "test.db"
@@ -121,9 +228,87 @@ class ProspectDatabaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             conn = init_db(str(Path(tmp) / "test.db"))
             mark_url_processed(conn, "https://example.com/x", "https://example.com/x",
-                               "CC-TEST", "unmatched")
+                               "CC-TEST", "stored", score=90,
+                               registered_domain="example.com",
+                               country="United States", bucket="english",
+                               discovery_tier=0, pattern_id="rule:0",
+                               final_family="forum", final_platform="phpBB",
+                               final_rule_id="phpbb_forum",
+                               matched_signals='[{"rule_id":"phpbb_forum"}]')
             self.assertEqual(
-                conn.execute("SELECT outcome FROM processed_urls").fetchone()[0], "unmatched")
+                conn.execute("SELECT outcome FROM processed_urls").fetchone()[0], "stored")
+            row = conn.execute(
+                """SELECT registered_domain, discovery_tier, pattern_id,
+                          final_family, final_rule_id
+                   FROM processed_urls"""
+            ).fetchone()
+            self.assertEqual(
+                row,
+                ("example.com", 0, "rule:0", "forum", "phpbb_forum"),
+            )
+            conn.close()
+
+    def test_fetch_errors_remain_retryable_and_count_attempts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = init_db(str(Path(tmp) / "test.db"))
+            normalized = "https://example.com/x"
+            record_fetch_error(
+                conn, normalized, normalized, "CC-TEST", "Timeout: first"
+            )
+            record_fetch_error(
+                conn, normalized, normalized, "CC-TEST", "Timeout: second"
+            )
+            self.assertEqual(
+                conn.execute(
+                    """SELECT attempts, last_error, resolved_at
+                       FROM fetch_attempts"""
+                ).fetchone(),
+                (2, "Timeout: second", None),
+            )
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM processed_urls").fetchone()[0],
+                0,
+            )
+            mark_url_processed(
+                conn, normalized, normalized, "CC-TEST", "unmatched"
+            )
+            self.assertIsNotNone(
+                conn.execute(
+                    "SELECT resolved_at FROM fetch_attempts"
+                ).fetchone()[0]
+            )
+            conn.close()
+
+    def test_init_db_migrates_legacy_processed_table_before_indexing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "legacy.db")
+            conn = sqlite3.connect(path)
+            conn.execute(
+                """CREATE TABLE processed_urls (
+                       normalized_url TEXT PRIMARY KEY,
+                       url TEXT NOT NULL,
+                       crawl TEXT,
+                       outcome TEXT NOT NULL,
+                       score INTEGER,
+                       processed_at TEXT
+                   )"""
+            )
+            conn.commit()
+            conn.close()
+
+            conn = init_db(path)
+            columns = {
+                row[1] for row in conn.execute(
+                    "PRAGMA table_info(processed_urls)"
+                )
+            }
+            self.assertIn("pattern_id", columns)
+            indexes = {
+                row[1] for row in conn.execute(
+                    "PRAGMA index_list(processed_urls)"
+                )
+            }
+            self.assertIn("idx_processed_urls_pattern", indexes)
             conn.close()
 
     def test_score_floor_archives_old_candidates(self):

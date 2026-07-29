@@ -14,6 +14,7 @@ from multi_crawl import (
     existing_shard_count,
     mark_discovery_complete,
     merge_candidate_files,
+    read_discovery_marker,
     resolve_discovery_shards,
 )
 
@@ -31,11 +32,44 @@ class MultiCrawlTests(unittest.TestCase):
         args = argparse.Namespace(
             categories_file="categories.json", per_category_limit=5000,
             db="prospects.db", min_score=50, workers=64, max_parts=300,
-            max_per_domain=10, source="s3", progress_interval=60,
-            footprints=None, exclude_file=None, proxy=None, proxy_file=None)
+            max_per_domain=10, source="s3", index_source="auto", progress_interval=60,
+            footprints=None, category_limits=None, discovery_profile="precise",
+            broad_quota_fraction=0.25, broad_index_sample=0.02,
+            exclude_file=None, proxy=None, proxy_file=None)
         command = build_command(args, "CC-MAIN-2026-21", "/tmp/2026-21.jsonl")
         self.assertIn("CC-MAIN-2026-21", command)
         self.assertIn("/tmp/2026-21.jsonl", command)
+        self.assertEqual(command[command.index("--index-source") + 1], "auto")
+        self.assertEqual(
+            command[command.index("--broad-quota-fraction") + 1], "0.25")
+
+    def test_category_limits_are_divided_across_discovery_shards(self):
+        args = argparse.Namespace(
+            categories_file="categories.json", per_category_limit=5000,
+            db="prospects.db", min_score=50, workers=64, max_parts=300,
+            max_per_domain=10, source="s3", index_source="auto", progress_interval=60,
+            footprints=None, category_limits="category_limits.small.json",
+            discovery_profile="broad", broad_quota_fraction=0.25,
+            broad_index_sample=0.02,
+            exclude_file=None, proxy=None, proxy_file=None)
+        command = build_command(
+            args, "CC-MAIN-2026-21", "/tmp/shard.jsonl",
+            category_limit_divisor=4)
+        self.assertEqual(
+            command[command.index("--category-limit-divisor") + 1], "4")
+
+    def test_optional_discovery_metrics_are_forwarded(self):
+        args = argparse.Namespace(
+            categories_file="categories.json", per_category_limit=5000,
+            db="prospects.db", min_score=50, workers=64, max_parts=300,
+            max_per_domain=10, source="s3", index_source="auto",
+            progress_interval=60, footprints=None, category_limits=None,
+            discovery_profile="precise", broad_quota_fraction=0.25,
+            broad_index_sample=0.02, discovery_metrics=True,
+            exclude_file=None, proxy=None, proxy_file=None)
+        command = build_command(
+            args, "CC-MAIN-2026-21", "/tmp/metrics.jsonl")
+        self.assertIn("--discovery-metrics", command)
 
     def test_merge_deduplicates_normalized_urls(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -80,8 +114,14 @@ class MultiCrawlTests(unittest.TestCase):
     def test_completion_marker_is_atomic_and_discoverable(self):
         with tempfile.TemporaryDirectory() as tmp:
             candidates = str(Path(tmp) / "crawl.jsonl")
-            mark_discovery_complete(candidates)
+            identity = {
+                "crawl": "CC-TEST",
+                "taxonomy_hash": "abc",
+                "discovery_profile": "precise",
+            }
+            mark_discovery_complete(candidates, identity)
             self.assertTrue(Path(discovery_marker(candidates)).is_file())
+            self.assertEqual(read_discovery_marker(candidates), identity)
 
     def test_auto_shards_follow_available_cpu_with_ceiling(self):
         self.assertEqual(resolve_discovery_shards(0, cpu_count=1), 1)
