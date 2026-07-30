@@ -3,6 +3,8 @@ import sqlite3
 import unittest
 from unittest.mock import Mock, patch
 
+from requests.exceptions import ConnectionError as RequestsConnectionError
+from urllib3.exceptions import ReadTimeoutError
 from warcio.statusandheaders import StatusAndHeaders
 from warcio.warcwriter import WARCWriter
 
@@ -108,6 +110,25 @@ class WarcAndSitemapTests(unittest.TestCase):
         self.assertEqual(final_url, response.url)
         self.assertEqual(len(payload), 65_546)
         self.assertEqual(response.raw.read.call_args_list[0].args[0], 65_536)
+        response.close.assert_called_once()
+
+    def test_raw_urllib3_timeout_is_normalized_to_requests_error(self):
+        response = Mock()
+        response.status_code = 200
+        response.url = "https://example.com/sitemap.xml"
+        response.raw.read.side_effect = ReadTimeoutError(
+            None, response.url, "timed out"
+        )
+        session = Mock()
+        session.get.return_value = response
+
+        with self.assertRaises(RequestsConnectionError):
+            _get_limited(
+                session,
+                response.url,
+                EnrichmentConfig(timeout=8),
+                100_000,
+            )
         response.close.assert_called_once()
 
     def test_relative_robots_sitemap_is_resolved_against_origin(self):

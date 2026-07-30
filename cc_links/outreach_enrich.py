@@ -39,6 +39,7 @@ from requests.exceptions import (
 from requests.exceptions import (
     ConnectionError as RequestsConnectionError,
 )
+from urllib3.exceptions import HTTPError as Urllib3HTTPError
 from warcio.archiveiterator import ArchiveIterator
 from warcio.exceptions import ArchiveLoadFailed
 
@@ -868,17 +869,24 @@ def _get_limited(
     try:
         chunks: list[bytes] = []
         total = 0
-        while total <= limit:
-            if time.monotonic() >= deadline:
-                raise Timeout(f"sitemap response exceeded {config.timeout}s")
-            chunk = response.raw.read(
-                min(65_536, limit + 1 - total),
-                decode_content=True,
-            )
-            if not chunk:
-                break
-            chunks.append(chunk)
-            total += len(chunk)
+        try:
+            while total <= limit:
+                if time.monotonic() >= deadline:
+                    raise Timeout(
+                        f"sitemap response exceeded {config.timeout}s"
+                    )
+                chunk = response.raw.read(
+                    min(65_536, limit + 1 - total),
+                    decode_content=True,
+                )
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                total += len(chunk)
+        except Urllib3HTTPError as exc:
+            raise RequestsConnectionError(
+                f"sitemap stream failed for {url}"
+            ) from exc
         payload = b"".join(chunks)
     finally:
         response.close()
