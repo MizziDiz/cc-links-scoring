@@ -211,6 +211,14 @@ def add_outreach_parser(subparsers: Any) -> argparse.ArgumentParser:
     terms.add_argument("--report", help="Optional terms summary JSON")
     terms.add_argument("--export", help="Optional full terms CSV")
 
+    terms_report = commands.add_parser(
+        "terms-report",
+        help="Regenerate JSON/CSV from an existing terms DB without fetching",
+    )
+    terms_report.add_argument("--db", required=True)
+    terms_report.add_argument("--report", required=True)
+    terms_report.add_argument("--export", help="Optional full terms CSV")
+
     metrics = commands.add_parser(
         "metrics",
         help="Import provider-neutral DR/DA/TF/CF/traffic metrics from CSV",
@@ -419,6 +427,17 @@ def run_outreach_command(args: argparse.Namespace) -> None:
                 ensure_ascii=False,
                 sort_keys=True,
             ),
+        )
+        return
+    if command == "terms-report":
+        terms_report_payload = write_terms_outputs(
+            args.db,
+            report_path=args.report,
+            csv_path=args.export,
+        )
+        LOGGER.info(
+            "outreach terms report complete: %s",
+            json.dumps(terms_report_payload, ensure_ascii=False, sort_keys=True),
         )
         return
     if command == "metrics":
