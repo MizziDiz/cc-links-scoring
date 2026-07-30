@@ -827,7 +827,7 @@ def parse_sitemap_document(
         return "invalid", [], truncated
     try:
         root = ET.fromstring(decoded)
-    except ET.ParseError:
+    except (ET.ParseError, ValueError):
         return "invalid", [], truncated
     kind = root.tag.rsplit("}", 1)[-1].lower()
     rows: list[tuple[str, str | None]] = []

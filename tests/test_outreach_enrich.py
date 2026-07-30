@@ -241,6 +241,18 @@ class WarcAndSitemapTests(unittest.TestCase):
         self.assertEqual(kind, "sitemapindex")
         self.assertEqual(rows[0][0], "https://example.com/page-sitemap.xml")
 
+    def test_rejects_unsupported_multibyte_xml_without_aborting(self):
+        payload = (
+            b'<?xml version="1.0" encoding="UTF-16"?>'
+            b"<urlset><url><loc>https://example.com/</loc></url></urlset>"
+        )
+        kind, rows, truncated = parse_sitemap_document(
+            payload, max_bytes=1_000_000
+        )
+        self.assertEqual(kind, "invalid")
+        self.assertEqual(rows, [])
+        self.assertFalse(truncated)
+
 
 if __name__ == "__main__":
     unittest.main()
