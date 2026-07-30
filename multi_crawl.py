@@ -10,11 +10,15 @@ import sqlite3
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from urllib.error import HTTPError
 from urllib.request import urlopen
 
 from cc_links.prospects import discovery_ruleset_identity, normalize_url
 
 COLLINFO_URL = "https://index.commoncrawl.org/collinfo.json"
+COLUMNAR_PATHS_URL = (
+    "https://data.commoncrawl.org/crawl-data/{crawl}/cc-index-table.paths.gz"
+)
 DISCOVERY_MARKER_SUFFIX = ".discovery-complete"
 SHARD_STATE_RE = re.compile(r"\.shard-(\d+)-of-(\d+)\.jsonl\.state\.json$")
 
@@ -36,6 +40,18 @@ def load_crawls(limit):
     with urlopen(COLLINFO_URL, timeout=30) as response:
         data = json.load(response)
     return [item["id"] for item in data[:limit]]
+
+
+def columnar_index_available(crawl, opener=urlopen):
+    """Return false only when a crawl has no columnar cc-index manifest."""
+    url = COLUMNAR_PATHS_URL.format(crawl=crawl)
+    try:
+        with opener(url, timeout=30):
+            return True
+    except HTTPError as exc:
+        if exc.code == 404:
+            return False
+        raise
 
 
 def discovery_state_complete(candidates_file, expected_parts):
@@ -255,6 +271,20 @@ def run(args):
             return 2
         combined_state_exists = os.path.exists(candidates_file + ".state.json")
         combined_complete = discovery_state_complete(candidates_file, args.max_parts)
+        resume_shards = existing_shard_count(args.state_dir, crawl)
+
+        if (
+            not marker_exists
+            and not combined_complete
+            and not combined_state_exists
+            and not resume_shards
+            and not columnar_index_available(crawl)
+        ):
+            print(
+                f"[multi] skipping {crawl}: columnar cc-index is unavailable",
+                flush=True,
+            )
+            continue
 
         if marker_exists or combined_complete:
             if combined_complete and not marker_exists:
@@ -277,7 +307,6 @@ def run(args):
             if not code and discovery_state_complete(candidates_file, args.max_parts):
                 mark_discovery_complete(candidates_file, identity)
         elif args.discovery_shards > 1 or existing_shard_count(args.state_dir, crawl):
-            resume_shards = existing_shard_count(args.state_dir, crawl)
             if resume_shards and resume_shards != args.discovery_shards:
                 print(f"[multi] resuming existing {resume_shards}-shard layout for "
                       f"{crawl}; configured future shard count is "

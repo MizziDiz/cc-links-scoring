@@ -1,14 +1,16 @@
 import argparse
 import json
-import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock
+from urllib.error import HTTPError
 
 from cc_links.db import init_db
 from multi_crawl import (
     build_command,
     candidate_count,
+    columnar_index_available,
     discovery_marker,
     discovery_state_complete,
     existing_shard_count,
@@ -20,6 +22,32 @@ from multi_crawl import (
 
 
 class MultiCrawlTests(unittest.TestCase):
+    def test_columnar_index_availability_distinguishes_404(self):
+        response = Mock()
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        self.assertTrue(
+            columnar_index_available("CC-MAIN-TEST", opener=Mock(return_value=response))
+        )
+
+        missing = HTTPError(
+            "https://example.test/paths.gz", 404, "Not Found", {}, None
+        )
+        with self.subTest("missing index"):
+            self.assertFalse(
+                columnar_index_available(
+                    "CC-MAIN-2012", opener=Mock(side_effect=missing)
+                )
+            )
+
+        transient = HTTPError(
+            "https://example.test/paths.gz", 503, "Unavailable", {}, None
+        )
+        with self.assertRaises(HTTPError):
+            columnar_index_available(
+                "CC-MAIN-TEST", opener=Mock(side_effect=transient)
+            )
+
     def test_candidate_count_handles_new_and_initialized_databases(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "test.db"
