@@ -27,7 +27,7 @@ from cc_links.fetch import enable_s3, fetch_warc_record
 from cc_links.outreach_enrich import parse_warc_html
 
 TERMS_SCHEMA_VERSION = 2
-TERMS_EXTRACTOR_VERSION = 4
+TERMS_EXTRACTOR_VERSION = 5
 
 TERMS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS terms_meta (
@@ -228,17 +228,25 @@ PRICE_RE = re.compile(
     re.IGNORECASE,
 )
 PLACEMENT_PRICE_CONTEXT_RE = re.compile(
-    r"\b(?:publication|publishing|submission|guest\s+post|sponsored\s+post|"
-    r"placement|advertorial|single\s+post|multiple\s+posts?|per\s+(?:article|post)|"
-    r"additional\s+links?|pricing\s+details|payment\s+details|editorial\s+fee|"
+    r"\b(?:publication\s+(?:fees?|charges?|prices?|pricing)|"
+    r"publishing\s+(?:fees?|charges?|prices?)|"
+    r"submission\s+(?:fees?|charges?|prices?)|"
+    r"article\s+(?:processing|publishing)\s+(?:fees?|charges?)|"
+    r"guest\s+post|sponsored\s+post|link\s+insertion|"
+    r"placement|advertorial|single\s+post|multiple\s+posts?|"
+    r"per\s+(?:article|post)|"
+    r"pricing\s+details|payment\s+details|editorial\s+(?:review\s+)?fee|"
+    r"(?:package|plan)\s+(?:price|fee|cost)|"
     r"tarifa\s+de\s+publicacion|por\s+articulo|post\s+invitado|"
     r"taxa\s+de\s+publicacao|por\s+artigo|artigo\s+patrocinado)\b",
     re.IGNORECASE,
 )
 PRICE_EXCLUSION_RE = re.compile(
     r"\b(?:earn(?:s|ed|ing)?|payout|we\s+pay|paid\s+contributor|"
+    r"performance\s+bonus|compensat(?:e|es|ed|ion)|"
     r"donation|donacion|donacao|order\s+now|challenge|"
     r"bitcoin|ethereum|crypto\s+price|market\s+cap|"
+    r"free\s+shipping|seed\s+funding|series\s+[a-z]\s+funding|"
     r"professional\s+(?:editing|correction)|"
     r"(?:edicion|correccion)\s+profesional|"
     r"criacao\s+de\s+conteudo)\b",
@@ -247,6 +255,12 @@ PRICE_EXCLUSION_RE = re.compile(
 PRICE_ADDON_PREFIX_RE = re.compile(
     r"\b(?:additional|extra|optional)\s+(?:links?|backlinks?)"
     r"(?:\s+(?:costs?|fee))?\s*[:\-]?\s*$",
+    re.IGNORECASE,
+)
+PRICE_NONPLACEMENT_PREFIX_RE = re.compile(
+    r"\b(?:save|bonus|earn|payout|funding|donation|donacion|donacao|"
+    r"books?\s+under|free\s+shipping|salary|prize|worth|valued\s+at)"
+    r"(?:\s+\w+){0,5}\s*[:\-]?\s*$",
     re.IGNORECASE,
 )
 
@@ -360,6 +374,20 @@ def extract_placement_terms(html: str) -> dict[str, Any]:
         if parent is not None:
             parent.remove(node)
     text = _normalized(" ".join(document.itertext()))[:3_000_000]
+    segment_xpath = (
+        "//p|//li|//tr|//label|//option|//figcaption|"
+        "//h1|//h2|//h3|//h4|//h5|//h6|"
+        "//div[not(.//div)]|//section[not(.//section)]"
+    )
+    price_segments = sorted(
+        {
+            segment
+            for node in document.xpath(segment_xpath)
+            if 5 <= len(segment := _normalized(" ".join(node.itertext()))) <= 2_000
+        }
+    )
+    if not price_segments:
+        price_segments = [text[:2_000]]
     matches: list[tuple[str, re.Match[str]]] = []
 
     def found(signal: str, pattern: re.Pattern[str]) -> bool:
@@ -427,25 +455,34 @@ def extract_placement_terms(html: str) -> dict[str, Any]:
         break
     quote_signal = found("commercial:quote_required", QUOTE_RE)
     prices: list[tuple[float, str]] = []
-    for match in PRICE_RE.finditer(text):
-        token = match.group("prefix") or match.group("suffix") or ""
-        amount_text = match.group("amount1") or match.group("amount2") or ""
-        amount = _price_number(amount_text)
-        currency = CURRENCY_MAP.get(token.upper(), CURRENCY_MAP.get(token))
-        context = text[max(0, match.start() - 180) : match.end() + 180]
-        prefix = text[max(0, match.start() - 90) : match.start()]
-        price_context = bool(PLACEMENT_PRICE_CONTEXT_RE.search(context))
-        excluded_context = bool(PRICE_EXCLUSION_RE.search(context))
-        addon_price = bool(PRICE_ADDON_PREFIX_RE.search(prefix))
-        if (
-            amount is not None
-            and currency
-            and price_context
-            and not excluded_context
-            and not addon_price
-        ):
+    price_evidence: list[dict[str, str]] = []
+    seen_price_options: set[tuple[float, str, str]] = set()
+    for segment in price_segments:
+        price_context = bool(PLACEMENT_PRICE_CONTEXT_RE.search(segment))
+        excluded_context = bool(PRICE_EXCLUSION_RE.search(segment))
+        if not price_context or excluded_context:
+            continue
+        for match in PRICE_RE.finditer(segment):
+            token = match.group("prefix") or match.group("suffix") or ""
+            amount_text = match.group("amount1") or match.group("amount2") or ""
+            amount = _price_number(amount_text)
+            currency = CURRENCY_MAP.get(token.upper(), CURRENCY_MAP.get(token))
+            prefix = segment[max(0, match.start() - 100) : match.start()]
+            addon_price = bool(PRICE_ADDON_PREFIX_RE.search(prefix))
+            nonplacement_price = bool(PRICE_NONPLACEMENT_PREFIX_RE.search(prefix))
+            if amount is None or not currency or addon_price or nonplacement_price:
+                continue
+            option = (amount, currency, segment)
+            if option in seen_price_options:
+                continue
+            seen_price_options.add(option)
             prices.append((amount, currency))
-            matches.append(("commercial:advertised_price", match))
+            price_evidence.append(
+                {
+                    "signal": "commercial:advertised_price",
+                    "snippet": segment[:500],
+                }
+            )
     currencies = sorted({currency for _, currency in prices})
     if prices:
         price_status = (
@@ -506,7 +543,7 @@ def extract_placement_terms(html: str) -> dict[str, Any]:
         "permanence": permanence,
         "content_responsibility": content_responsibility,
         "turnaround_days_max": max(turnaround_days) if turnaround_days else None,
-        "evidence_json": _evidence(text, matches),
+        "evidence_json": (_evidence(text, matches) + price_evidence)[:40],
     }
 
 
