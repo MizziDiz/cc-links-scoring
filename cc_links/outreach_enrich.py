@@ -29,6 +29,8 @@ from lxml import html as lxml_html
 from requests.exceptions import (
     ChunkedEncodingError,
     ContentDecodingError,
+    InvalidSchema,
+    InvalidURL,
     RequestException,
     SSLError,
     Timeout,
@@ -904,7 +906,10 @@ def check_domain_sitemaps(
                 if status == 200:
                     text = robots.decode("utf-8", errors="replace")
                     candidates.extend(
-                        line.split(":", 1)[1].strip()
+                        urljoin(
+                            origin + "/robots.txt",
+                            line.split(":", 1)[1].strip(),
+                        )
                         for line in text.splitlines()
                         if line.lower().startswith("sitemap:") and ":" in line
                     )
@@ -915,6 +920,8 @@ def check_domain_sitemaps(
                 ChunkedEncodingError,
                 ContentDecodingError,
                 SSLError,
+                InvalidSchema,
+                InvalidURL,
             ) as exc:
                 errors.append(f"robots:{type(exc).__name__}")
             candidates.extend(
@@ -930,6 +937,13 @@ def check_domain_sitemaps(
                 continue
             seen.add(sitemap_url)
             attempted += 1
+            parsed_sitemap = urlparse(sitemap_url)
+            if (
+                parsed_sitemap.scheme not in ("http", "https")
+                or not parsed_sitemap.netloc
+            ):
+                errors.append(f"invalid_url:{sitemap_url[:120]}")
+                continue
             try:
                 status, final_url, payload = _get_limited(
                     session,
@@ -944,6 +958,8 @@ def check_domain_sitemaps(
                 ChunkedEncodingError,
                 ContentDecodingError,
                 SSLError,
+                InvalidSchema,
+                InvalidURL,
             ) as exc:
                 errors.append(f"{type(exc).__name__}:{sitemap_url[:120]}")
                 continue

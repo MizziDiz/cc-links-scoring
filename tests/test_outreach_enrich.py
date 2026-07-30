@@ -88,6 +88,27 @@ class HtmlFeatureTests(unittest.TestCase):
 
 
 class WarcAndSitemapTests(unittest.TestCase):
+    def test_relative_robots_sitemap_is_resolved_against_origin(self):
+        calls: list[str] = []
+
+        def fake_get(session, url, config, max_bytes):
+            calls.append(url)
+            if url.endswith("/robots.txt"):
+                return 200, url, b"Sitemap: /sitemap.xml\n"
+            return 404, url, b""
+
+        with patch(
+            "cc_links.outreach_enrich._get_limited", side_effect=fake_get
+        ):
+            check_domain_sitemaps(
+                "example.com",
+                ["https://example.com/write-for-us/"],
+                EnrichmentConfig(max_sitemap_documents=2),
+            )
+
+        self.assertIn("https://example.com/sitemap.xml", calls)
+        self.assertNotIn("/sitemap.xml", calls)
+
     def test_sitemap_attempts_are_bounded_when_robots_lists_dead_maps(self):
         robots = "\n".join(
             f"Sitemap: https://example.com/dead-{index}.xml"
