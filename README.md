@@ -232,7 +232,8 @@ python pipeline.py outreach score \
   --out-db data/ops/outreach/outreach-scores.db \
   --report data/ops/outreach/outreach-score-report.json \
   --export data/ops/outreach/outreach-scores.csv \
-  --text-dir data/ops/outreach/score-bands
+  --text-dir data/ops/outreach/score-bands \
+  --profile v1
 ```
 
 The combined score weights discovery 15%, current live qualification 40%,
@@ -241,6 +242,13 @@ dates receive less confidence than current HTML/HTTP dates, while an exact URL
 match in a sitemap receives full freshness confidence. Hard noise evidence and
 failed live qualification cap the combined score; all component scores and
 reason codes remain available for review.
+
+`--profile v1` is the compatibility default. Optional `--profile v2` reduces
+the saturated discovery component to 5%, gives current qualification/content
+45%/35%, treats challenge markers as weak when a substantive editorial page is
+present, and recognizes strong editorial title/H1 phrases in Spanish,
+Portuguese, German and French. Broad collaboration wording alone is not
+promoted because it often describes partnerships, volunteering or careers.
 
 ## Adaptive discovery: baseline и feedback
 

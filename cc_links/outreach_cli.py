@@ -172,6 +172,12 @@ def add_outreach_parser(subparsers: Any) -> argparse.ArgumentParser:
     score.add_argument("--report", required=True)
     score.add_argument("--export", required=True, help="Full scored page CSV")
     score.add_argument("--text-dir", required=True, help="URL-only high/medium/low")
+    score.add_argument(
+        "--profile",
+        choices=["v1", "v2"],
+        default="v1",
+        help="Versioned score calibration; v1 preserves the original behavior",
+    )
     return parser
 
 
@@ -303,6 +309,7 @@ def run_outreach_command(args: argparse.Namespace) -> None:
             discovery_db=args.db,
             validation_db=args.validation_db,
             out_db=args.out_db,
+            profile=args.profile,
         )
         write_score_outputs(
             args.out_db,

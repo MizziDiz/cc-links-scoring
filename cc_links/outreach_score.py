@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 import sqlite3
+import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -12,6 +14,23 @@ from pathlib import Path
 from typing import Any
 
 SCORE_SCHEMA_VERSION = 1
+
+EDITORIAL_TITLE_RE = re.compile(
+    r"\b(?:"
+    r"write\s+for\s+us|submit\s+(?:an?\s+)?article|"
+    r"guest\s+post\s+guidelines|become\s+(?:an?\s+)?contributor|"
+    r"escrib(?:e|ir)\s+para\s+nosotros|publica\s+con\s+nosotros|"
+    r"envi(?:a|ar)\s+(?:tu\s+)?articulo|guia\s+para\s+autores|"
+    r"normas\s+de\s+publicacion|"
+    r"escreva\s+para\s+nos|envie\s+(?:seu|um)\s+artigo|"
+    r"publique\s+conosco|(?:guia|diretrizes)\s+para\s+autores|"
+    r"schreib(?:e|en)?\s+fur\s+uns|gastbeitrag\s+einreichen|"
+    r"autor\s+werden|beitrag\s+einreichen|"
+    r"ecrivez\s+pour\s+nous|soumettre\s+un\s+article|"
+    r"devenir\s+(?:auteur|contributeur)"
+    r")\b",
+    re.IGNORECASE,
+)
 
 SCORE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS page_scores (
@@ -159,6 +178,104 @@ def content_component(features: Mapping[str, Any]) -> tuple[float, list[str]]:
     return _clamp(score), reasons
 
 
+def _normalized_text(*values: Any) -> str:
+    text = " ".join(str(value or "") for value in values)
+    normalized = unicodedata.normalize("NFKD", text)
+    return "".join(
+        character for character in normalized if not unicodedata.combining(character)
+    )
+
+
+def content_component_v2(
+    features: Mapping[str, Any],
+) -> tuple[float, list[str]]:
+    """Score content with conservative multilingual and challenge handling."""
+    score = 15.0
+    reasons: list[str] = []
+    invitations = _json_list(features.get("invitation_phrases"))
+    guidelines = _json_list(features.get("guideline_signals"))
+    risks = set(_json_list(features.get("risk_flags")))
+    title_text = _normalized_text(features.get("title"), features.get("h1"))
+    editorial_title = bool(EDITORIAL_TITLE_RE.search(title_text))
+    submission_forms = int(features.get("submission_form_count") or 0)
+    forms = int(features.get("form_count") or 0)
+    contacts = int(features.get("contact_link_count") or 0)
+    emails = int(features.get("email_link_count") or 0)
+    words = int(features.get("word_count") or 0)
+
+    if invitations:
+        score += 40
+        reasons.append("invitation_phrase")
+    elif editorial_title:
+        score += 20
+        reasons.append("multilingual_editorial_title")
+    if submission_forms:
+        score += 15
+        reasons.append("submission_form")
+    elif forms:
+        score += 2
+        reasons.append("generic_form")
+    if guidelines:
+        score += 10
+        reasons.append("editorial_guidelines")
+    if contacts:
+        score += 7
+        reasons.append("contact_link")
+    if emails:
+        score += 3
+        reasons.append("email_link")
+    if features.get("engine_name"):
+        score += 3
+        reasons.append("known_engine")
+    if words >= 250:
+        score += 3
+        reasons.append("substantive_text")
+    if words >= 750:
+        score += 2
+        reasons.append("deep_text")
+    if "noindex" in str(features.get("meta_robots") or "").lower():
+        score -= 10
+        reasons.append("noindex")
+
+    penalties = {
+        "parked_or_for_sale": 60,
+        "soft_404": 45,
+        "demo_host": 45,
+        "taxonomy_path": 35,
+    }
+    for risk, penalty in penalties.items():
+        if risk in risks:
+            score -= penalty
+            reasons.append(f"risk:{risk}")
+    positive_editorial = bool(invitations or editorial_title)
+    if "careers_context" in risks and not positive_editorial:
+        score -= 25
+        reasons.append("risk:careers_context")
+    if (
+        "anti_bot_challenge" in risks
+        and not positive_editorial
+        and words < 200
+    ):
+        score -= 15
+        reasons.append("risk:anti_bot_challenge")
+    elif "anti_bot_challenge" in risks:
+        reasons.append("challenge_signal_ignored_as_weak")
+    return _clamp(score), reasons
+
+
+def discovery_component_v2(
+    *,
+    pattern_weight: float,
+    path_specificity: int,
+) -> float:
+    """Spread narrow 88..100 registry weights using path evidence."""
+    return _clamp(
+        50.0
+        + 2.0 * (pattern_weight - 88.0)
+        + min(max(path_specificity, 0), 24)
+    )
+
+
 def freshness_component(
     lastmod: Any,
     source: Any,
@@ -201,22 +318,51 @@ def score_page(
     qualification_score: float,
     live_outcome: str,
     now: datetime | None = None,
+    profile: str = "v1",
+    pattern_weight: float | None = None,
+    path_specificity: int | None = None,
 ) -> ScoreComponents:
     """Combine independent evidence while retaining every component."""
-    content, reasons = content_component(features)
+    if profile not in ("v1", "v2"):
+        raise ValueError("profile must be v1 or v2")
+    if profile == "v2":
+        content, reasons = content_component_v2(features)
+    else:
+        content, reasons = content_component(features)
     freshness, confidence, effective, date_reasons = freshness_component(
         features.get("best_lastmod"),
         features.get("best_lastmod_source"),
         now=now,
     )
-    discovery = _clamp(discovery_score)
+    if (
+        profile == "v2"
+        and pattern_weight is not None
+        and path_specificity is not None
+    ):
+        discovery = discovery_component_v2(
+            pattern_weight=pattern_weight,
+            path_specificity=path_specificity,
+        )
+        reasons.append("discovery_rescaled")
+    else:
+        discovery = _clamp(discovery_score)
     qualification = _clamp(qualification_score)
-    combined = _clamp(
-        0.15 * discovery
-        + 0.40 * qualification
-        + 0.30 * content
-        + 0.15 * effective
-    )
+    if profile == "v2":
+        combined = _clamp(
+            0.05 * discovery
+            + 0.45 * qualification
+            + 0.35 * content
+            + 0.15 * effective
+        )
+        reasons.append("profile:v2")
+    else:
+        combined = _clamp(
+            0.15 * discovery
+            + 0.40 * qualification
+            + 0.30 * content
+            + 0.15 * effective
+        )
+        reasons.append("profile:v1")
     risks = set(_json_list(features.get("risk_flags")))
     if risks & {
         "parked_or_for_sale",
@@ -262,6 +408,7 @@ def build_page_scores(
     validation_db: str | Path,
     out_db: str | Path,
     now: datetime | None = None,
+    profile: str = "v1",
 ) -> dict[str, Any]:
     """Join the three evidence stores and write a compact scoring database."""
     feature_rows = _read_rows(enrichment_db, "SELECT * FROM scoring_features")
@@ -271,7 +418,8 @@ def build_page_scores(
             discovery_db,
             """
             SELECT p.url,p.registered_domain,p.tld,p.pattern_id,
-                   p.pattern_language,d.discovery_score
+                   p.pattern_language,p.pattern_weight,p.path_specificity,
+                   d.discovery_score
             FROM outreach_pages p
             JOIN outreach_prospects d USING(registered_domain)
             """,
@@ -309,6 +457,17 @@ def build_page_scores(
             ),
             live_outcome=live_outcome,
             now=now,
+            profile=profile,
+            pattern_weight=(
+                float(discovery["pattern_weight"])
+                if discovery.get("pattern_weight") is not None
+                else None
+            ),
+            path_specificity=(
+                int(discovery["path_specificity"])
+                if discovery.get("path_specificity") is not None
+                else None
+            ),
         )
         connection.execute(
             f"INSERT INTO page_scores VALUES ({placeholders})",
@@ -360,6 +519,7 @@ def build_page_scores(
     ).fetchone()
     report = {
         "schema_version": SCORE_SCHEMA_VERSION,
+        "profile": profile,
         "scored_at": scored_at,
         "pages": len(feature_rows),
         "missing_discovery": missing_discovery,
