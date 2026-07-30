@@ -1,0 +1,662 @@
+"""Extract auditable publication promises and commercial terms from outreach HTML."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+import sqlite3
+import time
+import unicodedata
+from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from botocore.exceptions import BotoCoreError, ClientError
+from lxml import etree
+from lxml import html as lxml_html
+from requests.exceptions import RequestException
+from warcio.exceptions import ArchiveLoadFailed
+
+from cc_links.fetch import enable_s3, fetch_warc_record
+from cc_links.outreach_enrich import parse_warc_html
+
+TERMS_SCHEMA_VERSION = 1
+TERMS_EXTRACTOR_VERSION = 1
+
+TERMS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS terms_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS placement_terms (
+    url TEXT PRIMARY KEY,
+    registered_domain TEXT NOT NULL,
+    source TEXT NOT NULL,
+    analyzed_at TEXT NOT NULL,
+    fetch_status TEXT NOT NULL,
+    placement_types TEXT NOT NULL DEFAULT '[]',
+    promise_level TEXT NOT NULL DEFAULT 'unclear',
+    promise_probability REAL NOT NULL DEFAULT 0.15,
+    commercial_model TEXT NOT NULL DEFAULT 'unknown',
+    price_status TEXT NOT NULL DEFAULT 'unknown',
+    price_min REAL,
+    price_max REAL,
+    currency TEXT,
+    link_attributes TEXT NOT NULL DEFAULT '[]',
+    placement_locations TEXT NOT NULL DEFAULT '[]',
+    permanence TEXT NOT NULL DEFAULT 'unspecified',
+    content_responsibility TEXT NOT NULL DEFAULT 'unspecified',
+    turnaround_days_max INTEGER,
+    evidence_json TEXT NOT NULL DEFAULT '[]',
+    error_kind TEXT,
+    error_detail TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_placement_terms_domain
+    ON placement_terms(registered_domain);
+CREATE INDEX IF NOT EXISTS idx_placement_terms_promise
+    ON placement_terms(promise_level);
+CREATE INDEX IF NOT EXISTS idx_placement_terms_price
+    ON placement_terms(price_status,currency,price_min);
+"""
+
+GUARANTEE_RE = re.compile(
+    r"\b(?:publication\s+is\s+guaranteed|guaranteed\s+publication|"
+    r"we\s+will\s+publish|your\s+(?:post|article)\s+will\s+be\s+published|"
+    r"publicacion\s+garantizada|sera\s+publicad[oa]|"
+    r"publicacao\s+garantida|sera\s+publicad[oa])\b",
+    re.IGNORECASE,
+)
+CONDITIONAL_RE = re.compile(
+    r"\b(?:subject\s+to\s+(?:editorial\s+)?review|if\s+accepted|"
+    r"submissions?\s+(?:are|will\s+be)\s+reviewed|editorial\s+approval|"
+    r"we\s+reserve\s+the\s+right|(?:does\s+not|not)\s+guarantee\s+publication|"
+    r"sujeto\s+a\s+(?:revision|aprobacion)|si\s+(?:es\s+)?aceptad[oa]|"
+    r"nos\s+reservamos\s+el\s+derecho|"
+    r"sujeit[oa]\s+a\s+(?:revisao|avaliacao)|se\s+(?:for\s+)?aceit[oa]|"
+    r"nao\s+garantimos?\s+a\s+publicacao)\b",
+    re.IGNORECASE,
+)
+OPEN_SUBMISSION_RE = re.compile(
+    r"\b(?:write\s+for\s+us|submit\s+(?:your|an?)\s+article|"
+    r"become\s+(?:an?\s+)?contributor|guest\s+post\s+guidelines|"
+    r"escribe\s+para\s+nosotros|envia\s+tu\s+articulo|"
+    r"publica\s+con\s+nosotros|guia\s+para\s+autores|"
+    r"escreva\s+para\s+nos|envie\s+(?:seu|um)\s+artigo|"
+    r"publique\s+conosco|diretrizes\s+para\s+autores|"
+    r"ecrivez\s+pour\s+nous|soumettre\s+un\s+article|"
+    r"schreib(?:e|en)?\s+fur\s+uns|gastbeitrag\s+einreichen)\b",
+    re.IGNORECASE,
+)
+
+PLACEMENT_PATTERNS: dict[str, re.Pattern[str]] = {
+    "guest_post": re.compile(
+        r"\b(?:guest\s+(?:post|article|contribution)|"
+        r"articulo\s+invitado|post\s+invitado|"
+        r"artigo\s+convidado|gastbeitrag)\b",
+        re.IGNORECASE,
+    ),
+    "sponsored_post": re.compile(
+        r"\b(?:sponsored\s+(?:guest\s+)?(?:post|article|content)|paid\s+placement|"
+        r"advertorial|articulo\s+patrocinado|contenido\s+patrocinado|"
+        r"artigo\s+patrocinado|publireportage|publireportaje)\b",
+        re.IGNORECASE,
+    ),
+    "contributor": re.compile(
+        r"\b(?:become\s+(?:an?\s+)?contributor|contributor\s+program|"
+        r"colaborador(?:a)?|contribuidor(?:a)?|contributeur|autor\s+werden)\b",
+        re.IGNORECASE,
+    ),
+    "editorial_submission": re.compile(
+        r"\b(?:submit\s+(?:your|an?)\s+article|article\s+submission|"
+        r"envia\s+tu\s+articulo|enviar\s+articulo|"
+        r"envie\s+(?:seu|um)\s+artigo|soumettre\s+un\s+article)\b",
+        re.IGNORECASE,
+    ),
+    "link_insertion": re.compile(
+        r"\b(?:link\s+insertion|niche\s+edit|existing\s+article|"
+        r"insercion\s+de\s+enlace|insercao\s+de\s+link)\b",
+        re.IGNORECASE,
+    ),
+}
+
+LINK_PATTERNS: dict[str, re.Pattern[str]] = {
+    "dofollow": re.compile(r"\b(?:do[\s-]?follow|followed\s+link)\b", re.IGNORECASE),
+    "nofollow": re.compile(r"\bno[\s-]?follow\b", re.IGNORECASE),
+    "sponsored": re.compile(
+        r"\brel\s*=\s*[\"']?sponsored|sponsored\s+link\b", re.IGNORECASE
+    ),
+    "ugc": re.compile(r"\brel\s*=\s*[\"']?ugc\b", re.IGNORECASE),
+}
+LOCATION_PATTERNS: dict[str, re.Pattern[str]] = {
+    "editorial_body": re.compile(
+        r"\b(?:in[-\s]?content|contextual\s+link|within\s+the\s+(?:article|content)|"
+        r"enlace\s+contextual|dentro\s+del\s+articulo|link\s+contextual)\b",
+        re.IGNORECASE,
+    ),
+    "author_bio": re.compile(
+        r"\b(?:author\s+bio|author\s+biography|bio\s+link|"
+        r"biografia\s+del\s+autor|biografia\s+do\s+autor)\b",
+        re.IGNORECASE,
+    ),
+    "site_blog": re.compile(
+        r"\b(?:published\s+on\s+(?:our|the)\s+(?:site|website|blog)|"
+        r"publication\s+on\s+(?:our|the)\s+(?:site|blog)|"
+        r"publicado\s+en\s+(?:nuestro|el)\s+(?:sitio|blog)|"
+        r"publicado\s+no\s+(?:nosso|blog|site))\b",
+        re.IGNORECASE,
+    ),
+    "homepage": re.compile(
+        r"\b(?:home\s?page|pagina\s+principal|pagina\s+inicial)\b", re.IGNORECASE
+    ),
+    "social_promotion": re.compile(
+        r"\b(?:shared|promoted)\s+on\s+(?:our\s+)?social|"
+        r"(?:redes\s+sociales|redes\s+sociais)\b",
+        re.IGNORECASE,
+    ),
+}
+
+PERMANENT_RE = re.compile(
+    r"\b(?:permanent(?:ly)?|lifetime|never\s+removed|"
+    r"permanente|de\s+por\s+vida|nao\s+sera\s+removido)\b",
+    re.IGNORECASE,
+)
+TEMPORARY_RE = re.compile(
+    r"\b(?:temporary|for\s+(?:only\s+)?\d+\s+(?:months?|years?)|"
+    r"durante\s+\d+\s+(?:meses|anos)|temporal)\b",
+    re.IGNORECASE,
+)
+AUTHOR_PROVIDES_RE = re.compile(
+    r"\b(?:you\s+(?:must|will|should)\s+(?:write|provide|submit)|"
+    r"send\s+us\s+your\s+(?:article|draft)|"
+    r"debes\s+(?:escribir|enviar)|envianos\s+tu\s+articulo|"
+    r"voce\s+deve\s+(?:escrever|enviar)|envie\s+seu\s+artigo)\b",
+    re.IGNORECASE,
+)
+SITE_WRITES_RE = re.compile(
+    r"\b(?:we\s+(?:will|can)\s+write\s+(?:the\s+)?(?:article|content)|"
+    r"content\s+creation\s+included|"
+    r"redactamos\s+(?:el\s+)?articulo|criacao\s+de\s+conteudo\s+incluida)\b",
+    re.IGNORECASE,
+)
+FREE_RE = re.compile(
+    r"\b(?:free\s+(?:submission|guest\s+post|publication)|"
+    r"no\s+(?:submission|publication)\s+fee|without\s+charge|"
+    r"publicacion\s+gratuita|sin\s+costo|sin\s+tarifa|"
+    r"publicacao\s+gratuita|sem\s+custo|sem\s+taxa)\b",
+    re.IGNORECASE,
+)
+PAID_RE = re.compile(
+    r"\b(?:publication\s+fee|submission\s+fee|guest\s+post\s+fee|"
+    r"paid\s+(?:post|placement|publication)|sponsored\s+(?:post|article)|"
+    r"tarifa\s+de\s+publicacion|publicacion\s+pagada|articulo\s+patrocinado|"
+    r"taxa\s+de\s+publicacao|publicacao\s+paga|artigo\s+patrocinado)\b",
+    re.IGNORECASE,
+)
+QUOTE_RE = re.compile(
+    r"\b(?:contact\s+(?:us\s+)?for\s+(?:pricing|a\s+quote)|request\s+a\s+quote|"
+    r"pricing\s+on\s+request|consulte\s+(?:el\s+)?precio|solicite\s+or[cs]amento|"
+    r"preco\s+sob\s+consulta)\b",
+    re.IGNORECASE,
+)
+TURNAROUND_RE = re.compile(
+    r"\b(?:within|in|takes?|turnaround(?:\s+time)?(?:\s+is)?|"
+    r"en|dentro\s+de|em|prazo\s+de)\s*"
+    r"(?P<low>\d{1,3})(?:\s*[-–]\s*(?P<high>\d{1,3}))?\s*"
+    r"(?P<unit>business\s+days?|days?|weeks?|dias?|semanas?)\b",
+    re.IGNORECASE,
+)
+PRICE_RE = re.compile(
+    r"(?:(?P<prefix>US\$|USD|EUR|GBP|BRL|INR|R\$|\$|€|£|₹)\s*"
+    r"(?P<amount1>\d[\d., ]{0,14})|"
+    r"(?P<amount2>\d[\d., ]{0,14})\s*"
+    r"(?P<suffix>USD|EUR|GBP|BRL|INR))",
+    re.IGNORECASE,
+)
+
+PROMISE_PROBABILITY = {
+    "guaranteed": 0.85,
+    "conditional_review": 0.50,
+    "open_submission": 0.30,
+    "unclear": 0.15,
+}
+CURRENCY_MAP = {
+    "$": "USD",
+    "US$": "USD",
+    "USD": "USD",
+    "€": "EUR",
+    "EUR": "EUR",
+    "£": "GBP",
+    "GBP": "GBP",
+    "R$": "BRL",
+    "BRL": "BRL",
+    "₹": "INR",
+    "INR": "INR",
+}
+
+
+@dataclass(frozen=True)
+class TermsConfig:
+    """Settings that affect archived HTML commercial-term extraction."""
+
+    max_html_bytes: int = 5_000_000
+    retries: int = 2
+    retry_backoff: float = 1.0
+
+
+@dataclass(frozen=True)
+class TermsSummary:
+    """Counters for a resumable terms extraction run."""
+
+    input_pages: int
+    completed_pages: int
+    successful_pages: int
+    priced_pages: int
+    explicit_promise_pages: int
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _normalized(value: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", value)
+    without_marks = "".join(
+        character for character in decomposed if not unicodedata.combining(character)
+    )
+    return re.sub(r"\s+", " ", without_marks).strip()
+
+
+def _price_number(value: str) -> float | None:
+    compact = re.sub(r"\s+", "", value)
+    if not compact:
+        return None
+    if "," in compact and "." in compact:
+        if compact.rfind(",") > compact.rfind("."):
+            compact = compact.replace(".", "").replace(",", ".")
+        else:
+            compact = compact.replace(",", "")
+    elif "," in compact:
+        tail = compact.rsplit(",", 1)[1]
+        compact = (
+            compact.replace(",", ".") if len(tail) <= 2 else compact.replace(",", "")
+        )
+    try:
+        amount = float(compact)
+    except ValueError:
+        return None
+    return amount if 0 < amount <= 10_000_000 else None
+
+
+def _evidence(
+    text: str, matches: Sequence[tuple[str, re.Match[str]]]
+) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for signal, match in matches:
+        start = max(0, match.start() - 120)
+        end = min(len(text), match.end() + 160)
+        snippet = text[start:end].strip()
+        key = (signal, snippet)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append({"signal": signal, "snippet": snippet[:500]})
+        if len(rows) >= 40:
+            break
+    return rows
+
+
+def extract_placement_terms(html: str) -> dict[str, Any]:
+    """Return structured promises, price and link-placement evidence from HTML."""
+    parser = lxml_html.HTMLParser(recover=True, remove_comments=True)
+    try:
+        document = lxml_html.fromstring(html, parser=parser)
+    except (etree.ParserError, ValueError):
+        document = lxml_html.fromstring("<html></html>", parser=parser)
+    for node in document.xpath("//script|//style|//noscript|//svg"):
+        parent = node.getparent()
+        if parent is not None:
+            parent.remove(node)
+    text = _normalized(" ".join(document.itertext()))[:3_000_000]
+    matches: list[tuple[str, re.Match[str]]] = []
+
+    def found(signal: str, pattern: re.Pattern[str]) -> bool:
+        match = pattern.search(text)
+        if match:
+            matches.append((signal, match))
+            return True
+        return False
+
+    conditional = found("promise:conditional_review", CONDITIONAL_RE)
+    guaranteed = found("promise:guaranteed", GUARANTEE_RE) and not conditional
+    open_submission = found("promise:open_submission", OPEN_SUBMISSION_RE)
+    if guaranteed:
+        promise_level = "guaranteed"
+    elif conditional:
+        promise_level = "conditional_review"
+    elif open_submission:
+        promise_level = "open_submission"
+    else:
+        promise_level = "unclear"
+
+    placement_types = [
+        name
+        for name, pattern in PLACEMENT_PATTERNS.items()
+        if found(f"placement:{name}", pattern)
+    ]
+    link_attributes = [
+        name
+        for name, pattern in LINK_PATTERNS.items()
+        if found(f"link:{name}", pattern)
+    ]
+    placement_locations = [
+        name
+        for name, pattern in LOCATION_PATTERNS.items()
+        if found(f"location:{name}", pattern)
+    ]
+
+    if found("permanence:permanent", PERMANENT_RE):
+        permanence = "permanent"
+    elif found("permanence:temporary", TEMPORARY_RE):
+        permanence = "temporary"
+    else:
+        permanence = "unspecified"
+
+    author_provides = found("content:author_provides", AUTHOR_PROVIDES_RE)
+    site_writes = found("content:site_writes", SITE_WRITES_RE)
+    content_responsibility = (
+        "both_options"
+        if author_provides and site_writes
+        else "author_provides"
+        if author_provides
+        else "site_writes"
+        if site_writes
+        else "unspecified"
+    )
+
+    paid_signal = found("commercial:paid", PAID_RE)
+    free_signal = found("commercial:free", FREE_RE)
+    quote_signal = found("commercial:quote_required", QUOTE_RE)
+    prices: list[tuple[float, str]] = []
+    for match in PRICE_RE.finditer(text):
+        token = match.group("prefix") or match.group("suffix") or ""
+        amount_text = match.group("amount1") or match.group("amount2") or ""
+        amount = _price_number(amount_text)
+        currency = CURRENCY_MAP.get(token.upper(), CURRENCY_MAP.get(token))
+        if amount is not None and currency:
+            prices.append((amount, currency))
+            matches.append(("commercial:advertised_price", match))
+    currencies = sorted({currency for _, currency in prices})
+    if prices:
+        price_status = "advertised"
+        commercial_model = "paid"
+    elif free_signal:
+        price_status = "free"
+        commercial_model = "free"
+    elif paid_signal:
+        price_status = "paid_unquoted"
+        commercial_model = "paid"
+    elif quote_signal:
+        price_status = "quote_required"
+        commercial_model = "quote_required"
+    else:
+        price_status = "unknown"
+        commercial_model = "unknown"
+    currency = (
+        currencies[0] if len(currencies) == 1 else "MIXED" if currencies else None
+    )
+    price_values = [amount for amount, _ in prices]
+
+    turnaround_days: list[int] = []
+    for match in TURNAROUND_RE.finditer(text):
+        high = int(match.group("high") or match.group("low"))
+        unit = match.group("unit").lower()
+        turnaround_days.append(high * 7 if "week" in unit or "semana" in unit else high)
+        matches.append(("turnaround", match))
+
+    return {
+        "placement_types": sorted(placement_types),
+        "promise_level": promise_level,
+        "promise_probability": PROMISE_PROBABILITY[promise_level],
+        "commercial_model": commercial_model,
+        "price_status": price_status,
+        "price_min": min(price_values)
+        if price_values and currency != "MIXED"
+        else None,
+        "price_max": max(price_values)
+        if price_values and currency != "MIXED"
+        else None,
+        "currency": currency,
+        "link_attributes": sorted(link_attributes),
+        "placement_locations": sorted(placement_locations),
+        "permanence": permanence,
+        "content_responsibility": content_responsibility,
+        "turnaround_days_max": max(turnaround_days) if turnaround_days else None,
+        "evidence_json": _evidence(text, matches),
+    }
+
+
+def _input_digest(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1_048_576), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _init_terms_db(
+    path: Path, *, input_db: Path, config: TermsConfig
+) -> sqlite3.Connection:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(str(path), timeout=30)
+    connection.execute("PRAGMA journal_mode=WAL")
+    connection.execute("PRAGMA synchronous=NORMAL")
+    connection.executescript(TERMS_SCHEMA)
+    identity = {
+        "schema_version": str(TERMS_SCHEMA_VERSION),
+        "extractor_version": str(TERMS_EXTRACTOR_VERSION),
+        "input_sha256": _input_digest(input_db),
+        "config": _json(asdict(config)),
+    }
+    existing = dict(connection.execute("SELECT key,value FROM terms_meta"))
+    if existing:
+        mismatches = {
+            key: (existing.get(key), value)
+            for key, value in identity.items()
+            if existing.get(key) != value
+        }
+        if mismatches:
+            connection.close()
+            raise ValueError(f"terms resume identity mismatch: {mismatches}")
+    else:
+        with connection:
+            connection.executemany(
+                "INSERT INTO terms_meta(key,value) VALUES (?,?)",
+                sorted(identity.items()),
+            )
+    return connection
+
+
+def _load_pages(input_db: Path) -> list[dict[str, Any]]:
+    connection = sqlite3.connect(f"file:{input_db}?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    try:
+        return [
+            dict(row)
+            for row in connection.execute(
+                """
+                SELECT url,registered_domain,fetch_time,warc_filename,
+                       warc_record_offset,warc_record_length
+                FROM outreach_pages
+                ORDER BY registered_domain,url
+                """
+            )
+        ]
+    finally:
+        connection.close()
+
+
+def _extract_warc_terms(row: Mapping[str, Any], config: TermsConfig) -> dict[str, Any]:
+    last_error: Exception | None = None
+    for attempt in range(config.retries + 1):
+        try:
+            raw = fetch_warc_record(
+                str(row["warc_filename"]),
+                int(row["warc_record_offset"]),
+                int(row["warc_record_length"]),
+            )
+            page_html, _, _ = parse_warc_html(raw, config.max_html_bytes)
+            if page_html is None:
+                raise ValueError("WARC record is not HTML")
+            return {
+                "url": str(row["url"]),
+                "registered_domain": str(row["registered_domain"]),
+                "source": "warc",
+                "analyzed_at": _utc_now(),
+                "fetch_status": "ok",
+                **extract_placement_terms(page_html),
+            }
+        except (
+            ArchiveLoadFailed,
+            BotoCoreError,
+            ClientError,
+            RequestException,
+            EOFError,
+            TimeoutError,
+            OSError,
+            ValueError,
+        ) as exc:
+            last_error = exc
+            if attempt < config.retries:
+                time.sleep(config.retry_backoff * (2**attempt))
+    assert last_error is not None
+    return {
+        "url": str(row["url"]),
+        "registered_domain": str(row["registered_domain"]),
+        "source": "warc",
+        "analyzed_at": _utc_now(),
+        "fetch_status": "error",
+        "placement_types": [],
+        "promise_level": "unclear",
+        "promise_probability": PROMISE_PROBABILITY["unclear"],
+        "commercial_model": "unknown",
+        "price_status": "unknown",
+        "link_attributes": [],
+        "placement_locations": [],
+        "permanence": "unspecified",
+        "content_responsibility": "unspecified",
+        "evidence_json": [],
+        "error_kind": type(last_error).__name__,
+        "error_detail": str(last_error)[:500],
+    }
+
+
+TERMS_COLUMNS = (
+    "url",
+    "registered_domain",
+    "source",
+    "analyzed_at",
+    "fetch_status",
+    "placement_types",
+    "promise_level",
+    "promise_probability",
+    "commercial_model",
+    "price_status",
+    "price_min",
+    "price_max",
+    "currency",
+    "link_attributes",
+    "placement_locations",
+    "permanence",
+    "content_responsibility",
+    "turnaround_days_max",
+    "evidence_json",
+    "error_kind",
+    "error_detail",
+)
+
+
+def _save_terms(connection: sqlite3.Connection, row: Mapping[str, Any]) -> None:
+    values = dict(row)
+    for key in (
+        "placement_types",
+        "link_attributes",
+        "placement_locations",
+        "evidence_json",
+    ):
+        values[key] = _json(values.get(key, []))
+    placeholders = ",".join("?" for _ in TERMS_COLUMNS)
+    with connection:
+        connection.execute(
+            f"INSERT OR REPLACE INTO placement_terms "
+            f"({','.join(TERMS_COLUMNS)}) VALUES ({placeholders})",
+            tuple(values.get(column) for column in TERMS_COLUMNS),
+        )
+
+
+def build_placement_terms(
+    *,
+    input_db: str | Path,
+    out_db: str | Path,
+    workers: int = 24,
+    fetch_source: str = "s3",
+    config: TermsConfig | None = None,
+    progress: Callable[[str], None] | None = None,
+) -> TermsSummary:
+    """Fetch exact archived pages and build a resumable commercial-terms DB."""
+    if workers < 1:
+        raise ValueError("workers must be positive")
+    if fetch_source not in ("s3", "https"):
+        raise ValueError("fetch_source must be s3 or https")
+    config = config or TermsConfig()
+    input_path = Path(input_db)
+    rows = _load_pages(input_path)
+    connection = _init_terms_db(Path(out_db), input_db=input_path, config=config)
+    if fetch_source == "s3":
+        enable_s3(pool_size=max(32, workers * 2))
+    completed = {
+        str(row[0]) for row in connection.execute("SELECT url FROM placement_terms")
+    }
+    pending = [row for row in rows if str(row["url"]) not in completed]
+    if progress:
+        progress(f"terms: resume={len(completed)} pending={len(pending)}")
+    started = time.monotonic()
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            pool.submit(_extract_warc_terms, row, config): row for row in pending
+        }
+        for index, future in enumerate(as_completed(futures), start=1):
+            _save_terms(connection, future.result())
+            if progress and (index % 100 == 0 or index == len(pending)):
+                elapsed = max(0.001, time.monotonic() - started)
+                progress(
+                    f"terms: {len(completed) + index}/{len(rows)} "
+                    f"rate={index / elapsed * 60:.1f}/min"
+                )
+    counts = connection.execute(
+        """
+        SELECT COUNT(*),
+               SUM(fetch_status='ok'),
+               SUM(price_status IN ('advertised','free')),
+               SUM(promise_level!='unclear')
+        FROM placement_terms
+        """
+    ).fetchone()
+    connection.close()
+    return TermsSummary(
+        input_pages=len(rows),
+        completed_pages=int(counts[0] or 0),
+        successful_pages=int(counts[1] or 0),
+        priced_pages=int(counts[2] or 0),
+        explicit_promise_pages=int(counts[3] or 0),
+    )

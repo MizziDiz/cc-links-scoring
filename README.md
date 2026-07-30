@@ -250,6 +250,74 @@ present, and recognizes strong editorial title/H1 phrases in Spanish,
 Portuguese, German and French. Broad collaboration wording alone is not
 promoted because it often describes partnerships, volunteering or careers.
 
+## Outreach economics and expected effectiveness
+
+The optional value pipeline keeps three different questions separate:
+
+1. **What is promised?** Exact archived HTML is read again by WARC range.
+   Bounded evidence is retained for publication policy, guest/sponsored/link
+   insertion type, advertised price, dofollow/nofollow policy, contextual or
+   author-bio placement, permanence, turnaround and who writes the content.
+2. **How strong is the destination?** Provider exports are normalized into
+   optional DR/DA/Authority Score, Trust Flow/Citation Flow, organic traffic,
+   referring domains, spam and relevance fields. The project does not invent
+   or scrape branded SEO metrics.
+3. **What does a result cost?** Expected publication probability, placement
+   quality, domain strength, contact labor, content production and advertised
+   price remain visible as separate columns.
+
+Extract publication terms without keeping full HTML bodies:
+
+```bash
+python pipeline.py outreach terms \
+  --db data/ops/outreach/outreach.db \
+  --out-db data/ops/outreach/placement-terms.db \
+  --fetch-source s3 \
+  --workers 24
+```
+
+Import a provider export. Accepted headers include `domain`, `provider`, `DR`,
+`DA`, `Authority Score`, `Trust Flow`, `Citation Flow`, `Organic Traffic`,
+`Referring Domains`, `Spam Score`, `Topical Relevance`, and `Geo Relevance`.
+Missing metrics remain null and are never silently imputed.
+
+```bash
+python pipeline.py outreach metrics \
+  --input data/ops/outreach/domain-metrics.csv \
+  --out-db data/ops/outreach/outreach-value.db
+```
+
+Calculate expected effectiveness and economics:
+
+```bash
+python pipeline.py outreach value \
+  --scores-db data/ops/outreach/outreach-scores-v2.db \
+  --terms-db data/ops/outreach/placement-terms.db \
+  --out-db data/ops/outreach/outreach-value.db \
+  --contact-cost 5 \
+  --content-cost 40 \
+  --base-currency USD \
+  --fx data/ops/outreach/fx.csv \
+  --report data/ops/outreach/value-report.json \
+  --export data/ops/outreach/outreach-value.csv
+```
+
+`fx.csv` has `currency,rate_to_base`; currencies without an explicit rate are
+not compared. Expected contact cost is `contact_cost / publication_probability`.
+Content cost is omitted only when the publisher explicitly promises to write
+the article. Expected effectiveness multiplies domain strength, promised
+publication probability, placement quality and current page qualification.
+The output exposes every component and reason code instead of presenting the
+prediction as an observed SEO result.
+
+Observed campaign results can be fed back with `outreach outcomes`. The CSV
+supports `url`, `registered_domain`, `status`, `quoted_cost`, `actual_cost`,
+`currency`, `published_url`, `contacted_at`, `published_at`, `live_30d`,
+`live_90d`, and `notes`. Allowed statuses are `planned`, `contacted`, `replied`,
+`quoted`, `accepted`, `published`, `rejected`, and `unreachable`. This funnel is
+the calibration source for replacing initial promise-based probabilities with
+empirical rates after enough outreach has actually been performed.
+
 ## Adaptive discovery: baseline и feedback
 
 Воспроизводимый baseline перед изменением правил или порогов:

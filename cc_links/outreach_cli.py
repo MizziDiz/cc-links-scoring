@@ -29,6 +29,17 @@ from cc_links.outreach_report import (
     write_review_sample,
 )
 from cc_links.outreach_score import build_page_scores, write_score_outputs
+from cc_links.outreach_terms import (
+    TermsConfig,
+    build_placement_terms,
+)
+from cc_links.outreach_value import (
+    CostConfig,
+    build_value_scores,
+    import_domain_metrics,
+    import_outcomes,
+    write_value_outputs,
+)
 from cc_links.partmap import build_part_map
 
 LOGGER = logging.getLogger(__name__)
@@ -127,7 +138,9 @@ def add_outreach_parser(subparsers: Any) -> argparse.ArgumentParser:
         help="Run resumable, polite GET-only checks over every discovered page",
     )
     qualify.add_argument("--db", required=True, help="Read-only outreach discovery DB")
-    qualify.add_argument("--out-db", required=True, help="Separate checkpoint/result DB")
+    qualify.add_argument(
+        "--out-db", required=True, help="Separate checkpoint/result DB"
+    )
     qualify.add_argument("--report", required=True, help="Qualification summary JSON")
     qualify.add_argument("--export-dir", help="Status-separated domain CSV directory")
     qualify.add_argument("--workers", type=int, default=20)
@@ -157,9 +170,7 @@ def add_outreach_parser(subparsers: Any) -> argparse.ArgumentParser:
     enrich.add_argument("--max-html-bytes", type=int, default=5_000_000)
     enrich.add_argument("--max-sitemap-bytes", type=int, default=5_000_000)
     enrich.add_argument("--max-sitemap-documents", type=int, default=4)
-    enrich.add_argument(
-        "--fetch-source", choices=["s3", "https"], default="s3"
-    )
+    enrich.add_argument("--fetch-source", choices=["s3", "https"], default="s3")
 
     score = commands.add_parser(
         "score",
@@ -178,6 +189,50 @@ def add_outreach_parser(subparsers: Any) -> argparse.ArgumentParser:
         default="v1",
         help="Versioned score calibration; v1 preserves the original behavior",
     )
+
+    terms = commands.add_parser(
+        "terms",
+        help="Extract publication promises, placement type and advertised price",
+    )
+    terms.add_argument("--db", required=True, help="Read-only outreach discovery DB")
+    terms.add_argument("--out-db", required=True, help="Separate resumable terms DB")
+    terms.add_argument("--workers", type=int, default=24)
+    terms.add_argument("--max-html-bytes", type=int, default=5_000_000)
+    terms.add_argument("--retries", type=int, default=2)
+    terms.add_argument("--retry-backoff", type=float, default=1.0)
+    terms.add_argument("--fetch-source", choices=["s3", "https"], default="s3")
+
+    metrics = commands.add_parser(
+        "metrics",
+        help="Import provider-neutral DR/DA/TF/CF/traffic metrics from CSV",
+    )
+    metrics.add_argument("--input", required=True)
+    metrics.add_argument("--out-db", required=True, help="Value SQLite DB")
+
+    outcomes = commands.add_parser(
+        "outcomes",
+        help="Import observed contacted/replied/accepted/published outcomes",
+    )
+    outcomes.add_argument("--input", required=True)
+    outcomes.add_argument("--out-db", required=True, help="Value SQLite DB")
+
+    value = commands.add_parser(
+        "value",
+        help="Estimate placement effectiveness and cost per publication",
+    )
+    value.add_argument("--scores-db", required=True)
+    value.add_argument("--terms-db", required=True)
+    value.add_argument("--out-db", required=True)
+    value.add_argument(
+        "--metrics", help="Optional metrics CSV to import before scoring"
+    )
+    value.add_argument("--outcomes", help="Optional observed-outcomes CSV to import")
+    value.add_argument("--fx", help="CSV: currency,rate_to_base")
+    value.add_argument("--contact-cost", type=float, default=0.0)
+    value.add_argument("--content-cost", type=float, default=0.0)
+    value.add_argument("--base-currency", default="USD")
+    value.add_argument("--report", required=True)
+    value.add_argument("--export", required=True)
     return parser
 
 
@@ -261,9 +316,7 @@ def run_outreach_command(args: argparse.Namespace) -> None:
             resume=not args.no_resume,
             progress=LOGGER.info,
         )
-        report = write_qualification_outputs(
-            args.out_db, args.report, args.export_dir
-        )
+        report = write_qualification_outputs(args.out_db, args.report, args.export_dir)
         LOGGER.info(
             "outreach qualification complete: %s",
             json.dumps(
@@ -321,6 +374,81 @@ def run_outreach_command(args: argparse.Namespace) -> None:
         LOGGER.info(
             "outreach scoring complete: %s",
             json.dumps(report, ensure_ascii=False, sort_keys=True),
+        )
+        return
+    if command == "terms":
+        terms_config = TermsConfig(
+            max_html_bytes=args.max_html_bytes,
+            retries=args.retries,
+            retry_backoff=args.retry_backoff,
+        )
+        terms_summary = build_placement_terms(
+            input_db=args.db,
+            out_db=args.out_db,
+            workers=args.workers,
+            fetch_source=args.fetch_source,
+            config=terms_config,
+            progress=LOGGER.info,
+        )
+        LOGGER.info(
+            "outreach terms extraction complete: %s",
+            json.dumps(asdict(terms_summary), ensure_ascii=False, sort_keys=True),
+        )
+        return
+    if command == "metrics":
+        metrics_summary = import_domain_metrics(args.input, args.out_db)
+        LOGGER.info(
+            "domain metrics import complete: %s",
+            json.dumps(metrics_summary, ensure_ascii=False, sort_keys=True),
+        )
+        return
+    if command == "outcomes":
+        outcomes_summary = import_outcomes(args.input, args.out_db)
+        LOGGER.info(
+            "outreach outcomes import complete: %s",
+            json.dumps(outcomes_summary, ensure_ascii=False, sort_keys=True),
+        )
+        return
+    if command == "value":
+        if args.metrics:
+            LOGGER.info(
+                "domain metrics import: %s",
+                json.dumps(
+                    import_domain_metrics(args.metrics, args.out_db),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+            )
+        if args.outcomes:
+            LOGGER.info(
+                "outreach outcomes import: %s",
+                json.dumps(
+                    import_outcomes(args.outcomes, args.out_db),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+            )
+        cost_config = CostConfig(
+            contact_cost=args.contact_cost,
+            content_cost=args.content_cost,
+            base_currency=args.base_currency,
+        )
+        value_report = build_value_scores(
+            scores_db=args.scores_db,
+            terms_db=args.terms_db,
+            out_db=args.out_db,
+            cost_config=cost_config,
+            fx_csv=args.fx,
+        )
+        write_value_outputs(
+            args.out_db,
+            report_path=args.report,
+            csv_path=args.export,
+            report=value_report,
+        )
+        LOGGER.info(
+            "outreach value scoring complete: %s",
+            json.dumps(value_report, ensure_ascii=False, sort_keys=True),
         )
         return
     raise ValueError(f"unknown outreach command: {command}")
