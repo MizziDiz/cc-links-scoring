@@ -28,6 +28,7 @@ from cc_links.outreach_report import (
     write_json_report,
     write_review_sample,
 )
+from cc_links.outreach_score import build_page_scores, write_score_outputs
 from cc_links.partmap import build_part_map
 
 LOGGER = logging.getLogger(__name__)
@@ -159,6 +160,18 @@ def add_outreach_parser(subparsers: Any) -> argparse.ArgumentParser:
     enrich.add_argument(
         "--fetch-source", choices=["s3", "https"], default="s3"
     )
+
+    score = commands.add_parser(
+        "score",
+        help="Combine discovery, live, content and freshness evidence",
+    )
+    score.add_argument("--db", required=True, help="Read-only outreach discovery DB")
+    score.add_argument("--validation-db", required=True)
+    score.add_argument("--enrichment-db", required=True)
+    score.add_argument("--out-db", required=True)
+    score.add_argument("--report", required=True)
+    score.add_argument("--export", required=True, help="Full scored page CSV")
+    score.add_argument("--text-dir", required=True, help="URL-only high/medium/low")
     return parser
 
 
@@ -282,6 +295,25 @@ def run_outreach_command(args: argparse.Namespace) -> None:
                 ensure_ascii=False,
                 sort_keys=True,
             ),
+        )
+        return
+    if command == "score":
+        report = build_page_scores(
+            enrichment_db=args.enrichment_db,
+            discovery_db=args.db,
+            validation_db=args.validation_db,
+            out_db=args.out_db,
+        )
+        write_score_outputs(
+            args.out_db,
+            report_path=args.report,
+            csv_path=args.export,
+            text_dir=args.text_dir,
+            report=report,
+        )
+        LOGGER.info(
+            "outreach scoring complete: %s",
+            json.dumps(report, ensure_ascii=False, sort_keys=True),
         )
         return
     raise ValueError(f"unknown outreach command: {command}")

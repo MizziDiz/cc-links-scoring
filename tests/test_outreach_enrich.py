@@ -1,13 +1,16 @@
 import io
 import sqlite3
 import unittest
+from unittest.mock import patch
 
 from warcio.statusandheaders import StatusAndHeaders
 from warcio.warcwriter import WARCWriter
 
 from cc_links.outreach_enrich import (
     ENRICHMENT_SCHEMA,
+    EnrichmentConfig,
     _save_snapshot,
+    check_domain_sitemaps,
     extract_html_features,
     parse_sitemap_document,
     parse_warc_html,
@@ -85,6 +88,33 @@ class HtmlFeatureTests(unittest.TestCase):
 
 
 class WarcAndSitemapTests(unittest.TestCase):
+    def test_sitemap_attempts_are_bounded_when_robots_lists_dead_maps(self):
+        robots = "\n".join(
+            f"Sitemap: https://example.com/dead-{index}.xml"
+            for index in range(50)
+        ).encode()
+        calls: list[str] = []
+
+        def fake_get(session, url, config, max_bytes):
+            calls.append(url)
+            if url.endswith("/robots.txt"):
+                return 200, url, robots
+            return 404, url, b""
+
+        with patch(
+            "cc_links.outreach_enrich._get_limited", side_effect=fake_get
+        ):
+            domain, pages = check_domain_sitemaps(
+                "example.com",
+                ["https://example.com/write-for-us/"],
+                EnrichmentConfig(max_sitemap_documents=4),
+            )
+
+        sitemap_calls = [url for url in calls if not url.endswith("/robots.txt")]
+        self.assertEqual(len(sitemap_calls), 4)
+        self.assertEqual(domain["documents_fetched"], 0)
+        self.assertEqual(pages, [])
+
     def test_failure_snapshot_satisfies_schema_defaults(self):
         connection = sqlite3.connect(":memory:")
         connection.executescript(ENRICHMENT_SCHEMA)

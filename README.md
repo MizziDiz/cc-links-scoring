@@ -219,6 +219,27 @@ an exact sitemap match has priority, followed by current HTML/HTTP metadata and
 then archived HTML/HTTP metadata. Sitemap freshness remains a weighted signal,
 not a standalone approval or rejection rule.
 
+Combine discovery, live qualification, HTML content and freshness into
+auditable component scores:
+
+```bash
+python pipeline.py outreach score \
+  --db data/ops/outreach/outreach.db \
+  --validation-db data/ops/outreach/live-validation.db \
+  --enrichment-db data/ops/outreach/html-enrichment.db \
+  --out-db data/ops/outreach/outreach-scores.db \
+  --report data/ops/outreach/outreach-score-report.json \
+  --export data/ops/outreach/outreach-scores.csv \
+  --text-dir data/ops/outreach/score-bands
+```
+
+The combined score weights discovery 15%, current live qualification 40%,
+content evidence 30% and freshness 15%. Missing dates are neutral. Archived
+dates receive less confidence than current HTML/HTTP dates, while an exact URL
+match in a sitemap receives full freshness confidence. Hard noise evidence and
+failed live qualification cap the combined score; all component scores and
+reason codes remain available for review.
+
 ## Adaptive discovery: baseline и feedback
 
 Воспроизводимый baseline перед изменением правил или порогов:

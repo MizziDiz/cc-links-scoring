@@ -915,11 +915,13 @@ def check_domain_sitemaps(
         queue = list(dict.fromkeys(candidates))
         seen: set[str] = set()
         document_limit = config.max_sitemap_documents * max(1, len(origins))
-        while queue and fetched < document_limit:
+        attempted = 0
+        while queue and attempted < document_limit:
             sitemap_url = queue.pop(0)
             if sitemap_url in seen:
                 continue
             seen.add(sitemap_url)
+            attempted += 1
             try:
                 status, final_url, payload = _get_limited(
                     session,
