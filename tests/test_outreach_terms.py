@@ -65,6 +65,28 @@ class PlacementTermsTests(unittest.TestCase):
         self.assertEqual(result["price_status"], "free")
         self.assertIsNone(result["currency"])
 
+    def test_ignores_market_prices_donations_and_contributor_payouts(self) -> None:
+        for body in (
+            "Write for us. Bitcoin is $64,372. Submit your article.",
+            "Submit an article. Donations of $10,000 need a declaration.",
+            "Become a contributor and earn $99 for each approved profile.",
+        ):
+            with self.subTest(body=body):
+                result = extract_placement_terms(f"<p>{body}</p>")
+                self.assertEqual(result["price_status"], "unknown")
+                self.assertIsNone(result["price_min"])
+
+    def test_marks_free_and_paid_policy_as_conflicting(self) -> None:
+        result = extract_placement_terms(
+            """
+            <p>Free guest post submissions are welcome.</p>
+            <p>We also offer paid guest post opportunities.</p>
+            """
+        )
+
+        self.assertEqual(result["price_status"], "conflicting")
+        self.assertEqual(result["commercial_model"], "mixed")
+
 
 if __name__ == "__main__":
     unittest.main()

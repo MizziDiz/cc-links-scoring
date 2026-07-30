@@ -24,8 +24,8 @@ from warcio.exceptions import ArchiveLoadFailed
 from cc_links.fetch import enable_s3, fetch_warc_record
 from cc_links.outreach_enrich import parse_warc_html
 
-TERMS_SCHEMA_VERSION = 1
-TERMS_EXTRACTOR_VERSION = 1
+TERMS_SCHEMA_VERSION = 2
+TERMS_EXTRACTOR_VERSION = 2
 
 TERMS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS terms_meta (
@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS placement_terms (
     promise_probability REAL NOT NULL DEFAULT 0.15,
     commercial_model TEXT NOT NULL DEFAULT 'unknown',
     price_status TEXT NOT NULL DEFAULT 'unknown',
+    price_kind TEXT NOT NULL DEFAULT 'unknown',
     price_min REAL,
     price_max REAL,
     currency TEXT,
@@ -193,7 +194,8 @@ FREE_RE = re.compile(
 )
 PAID_RE = re.compile(
     r"\b(?:publication\s+fee|submission\s+fee|guest\s+post\s+fee|"
-    r"paid\s+(?:post|placement|publication)|sponsored\s+(?:post|article)|"
+    r"paid\s+(?:guest\s+)?(?:post|placement|publication)|"
+    r"sponsored\s+(?:post|article)|"
     r"tarifa\s+de\s+publicacion|publicacion\s+pagada|articulo\s+patrocinado|"
     r"taxa\s+de\s+publicacao|publicacao\s+paga|artigo\s+patrocinado)\b",
     re.IGNORECASE,
@@ -216,6 +218,23 @@ PRICE_RE = re.compile(
     r"(?P<amount1>\d[\d., ]{0,14})|"
     r"(?P<amount2>\d[\d., ]{0,14})\s*"
     r"(?P<suffix>USD|EUR|GBP|BRL|INR))",
+    re.IGNORECASE,
+)
+PLACEMENT_PRICE_CONTEXT_RE = re.compile(
+    r"\b(?:publication|publishing|submission|guest\s+post|sponsored\s+post|"
+    r"placement|advertorial|single\s+post|multiple\s+posts?|per\s+(?:article|post)|"
+    r"additional\s+links?|pricing\s+details|payment\s+details|editorial\s+fee|"
+    r"tarifa\s+de\s+publicacion|por\s+articulo|post\s+invitado|"
+    r"taxa\s+de\s+publicacao|por\s+artigo|artigo\s+patrocinado)\b",
+    re.IGNORECASE,
+)
+PRICE_EXCLUSION_RE = re.compile(
+    r"\b(?:earn(?:s|ed|ing)?|payout|we\s+pay|paid\s+contributor|"
+    r"donation|donacion|donacao|order\s+now|challenge|"
+    r"bitcoin|ethereum|crypto\s+price|market\s+cap|"
+    r"professional\s+(?:editing|correction)|"
+    r"(?:edicion|correccion)\s+profesional|"
+    r"criacao\s+de\s+conteudo)\b",
     re.IGNORECASE,
 )
 
@@ -385,8 +404,15 @@ def extract_placement_terms(html: str) -> dict[str, Any]:
         else "unspecified"
     )
 
-    paid_signal = found("commercial:paid", PAID_RE)
     free_signal = found("commercial:free", FREE_RE)
+    paid_signal = False
+    for paid_match in PAID_RE.finditer(text):
+        prefix = text[max(0, paid_match.start() - 25) : paid_match.start()]
+        if re.search(r"\b(?:no|without|sin|sem)\s*$", prefix, re.IGNORECASE):
+            continue
+        matches.append(("commercial:paid", paid_match))
+        paid_signal = True
+        break
     quote_signal = found("commercial:quote_required", QUOTE_RE)
     prices: list[tuple[float, str]] = []
     for match in PRICE_RE.finditer(text):
@@ -394,25 +420,37 @@ def extract_placement_terms(html: str) -> dict[str, Any]:
         amount_text = match.group("amount1") or match.group("amount2") or ""
         amount = _price_number(amount_text)
         currency = CURRENCY_MAP.get(token.upper(), CURRENCY_MAP.get(token))
-        if amount is not None and currency:
+        context = text[max(0, match.start() - 180) : match.end() + 180]
+        price_context = bool(PLACEMENT_PRICE_CONTEXT_RE.search(context))
+        excluded_context = bool(PRICE_EXCLUSION_RE.search(context))
+        if amount is not None and currency and price_context and not excluded_context:
             prices.append((amount, currency))
             matches.append(("commercial:advertised_price", match))
     currencies = sorted({currency for _, currency in prices})
     if prices:
         price_status = "advertised"
         commercial_model = "paid"
+        price_kind = "placement_fee"
+    elif free_signal and paid_signal:
+        price_status = "conflicting"
+        commercial_model = "mixed"
+        price_kind = "conflicting"
     elif free_signal:
         price_status = "free"
         commercial_model = "free"
+        price_kind = "free"
     elif paid_signal:
         price_status = "paid_unquoted"
         commercial_model = "paid"
+        price_kind = "placement_fee_unquoted"
     elif quote_signal:
         price_status = "quote_required"
         commercial_model = "quote_required"
+        price_kind = "placement_fee_unquoted"
     else:
         price_status = "unknown"
         commercial_model = "unknown"
+        price_kind = "unknown"
     currency = (
         currencies[0] if len(currencies) == 1 else "MIXED" if currencies else None
     )
@@ -431,6 +469,7 @@ def extract_placement_terms(html: str) -> dict[str, Any]:
         "promise_probability": PROMISE_PROBABILITY[promise_level],
         "commercial_model": commercial_model,
         "price_status": price_status,
+        "price_kind": price_kind,
         "price_min": min(price_values)
         if price_values and currency != "MIXED"
         else None,
@@ -552,6 +591,7 @@ def _extract_warc_terms(row: Mapping[str, Any], config: TermsConfig) -> dict[str
         "promise_probability": PROMISE_PROBABILITY["unclear"],
         "commercial_model": "unknown",
         "price_status": "unknown",
+        "price_kind": "unknown",
         "link_attributes": [],
         "placement_locations": [],
         "permanence": "unspecified",
@@ -573,6 +613,7 @@ TERMS_COLUMNS = (
     "promise_probability",
     "commercial_model",
     "price_status",
+    "price_kind",
     "price_min",
     "price_max",
     "currency",
