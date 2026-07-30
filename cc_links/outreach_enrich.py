@@ -15,7 +15,7 @@ import xml.etree.ElementTree as ET
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -883,6 +883,11 @@ def check_domain_sitemaps(
         }
     )
     session = requests.Session()
+    sitemap_request_config = replace(
+        config,
+        timeout=min(config.timeout, 8.0),
+        retries=0,
+    )
     candidates: list[str] = []
     errors: list[str] = []
     fetched = 0
@@ -891,7 +896,10 @@ def check_domain_sitemaps(
         for origin in origins:
             try:
                 status, _, robots = _get_limited(
-                    session, origin + "/robots.txt", config, 256_000
+                    session,
+                    origin + "/robots.txt",
+                    sitemap_request_config,
+                    256_000,
                 )
                 if status == 200:
                     text = robots.decode("utf-8", errors="replace")
@@ -926,7 +934,7 @@ def check_domain_sitemaps(
                 status, final_url, payload = _get_limited(
                     session,
                     sitemap_url,
-                    config,
+                    sitemap_request_config,
                     config.max_sitemap_bytes,
                 )
             except (

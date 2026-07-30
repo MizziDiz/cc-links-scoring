@@ -217,7 +217,9 @@ The `scoring_features` view selects current HTML when available and otherwise
 falls back to the Common Crawl snapshot. `best_lastmod` keeps its provenance:
 an exact sitemap match has priority, followed by current HTML/HTTP metadata and
 then archived HTML/HTTP metadata. Sitemap freshness remains a weighted signal,
-not a standalone approval or rejection rule.
+not a standalone approval or rejection rule. Sitemap lookup is best-effort:
+each bounded candidate document gets one request with an eight-second timeout,
+so slow or broken sitemap hosts cannot stall the full enrichment run.
 
 Combine discovery, live qualification, HTML content and freshness into
 auditable component scores:

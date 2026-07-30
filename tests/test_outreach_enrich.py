@@ -94,9 +94,11 @@ class WarcAndSitemapTests(unittest.TestCase):
             for index in range(50)
         ).encode()
         calls: list[str] = []
+        request_configs: list[EnrichmentConfig] = []
 
         def fake_get(session, url, config, max_bytes):
             calls.append(url)
+            request_configs.append(config)
             if url.endswith("/robots.txt"):
                 return 200, url, robots
             return 404, url, b""
@@ -112,6 +114,8 @@ class WarcAndSitemapTests(unittest.TestCase):
 
         sitemap_calls = [url for url in calls if not url.endswith("/robots.txt")]
         self.assertEqual(len(sitemap_calls), 4)
+        self.assertTrue(all(config.retries == 0 for config in request_configs))
+        self.assertTrue(all(config.timeout == 8 for config in request_configs))
         self.assertEqual(domain["documents_fetched"], 0)
         self.assertEqual(pages, [])
 
