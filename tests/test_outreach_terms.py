@@ -108,6 +108,15 @@ class PlacementTermsTests(unittest.TestCase):
         self.assertEqual(result["price_min"], 9.99)
         self.assertEqual(result["price_max"], 9.99)
 
+    def test_mixed_currency_prices_are_not_silently_compared(self) -> None:
+        result = extract_placement_terms(
+            "<p>Guest post publication fee: USD 50 or EUR 45 per article.</p>"
+        )
+
+        self.assertEqual(result["price_status"], "advertised_mixed_currency")
+        self.assertEqual(result["currency"], "MIXED")
+        self.assertIsNone(result["price_min"])
+
 
 if __name__ == "__main__":
     unittest.main()

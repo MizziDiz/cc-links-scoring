@@ -27,7 +27,7 @@ from cc_links.fetch import enable_s3, fetch_warc_record
 from cc_links.outreach_enrich import parse_warc_html
 
 TERMS_SCHEMA_VERSION = 2
-TERMS_EXTRACTOR_VERSION = 3
+TERMS_EXTRACTOR_VERSION = 4
 
 TERMS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS terms_meta (
@@ -448,9 +448,13 @@ def extract_placement_terms(html: str) -> dict[str, Any]:
             matches.append(("commercial:advertised_price", match))
     currencies = sorted({currency for _, currency in prices})
     if prices:
-        price_status = "advertised"
+        price_status = (
+            "advertised_mixed_currency" if len(currencies) > 1 else "advertised"
+        )
         commercial_model = "paid"
-        price_kind = "placement_fee"
+        price_kind = (
+            "placement_fee_mixed_currency" if len(currencies) > 1 else "placement_fee"
+        )
     elif free_signal and paid_signal:
         price_status = "conflicting"
         commercial_model = "mixed"
@@ -714,7 +718,7 @@ def build_placement_terms(
         """
         SELECT COUNT(*),
                SUM(fetch_status='ok'),
-               SUM(price_status IN ('advertised','free')),
+               SUM(price_status IN ('advertised','advertised_mixed_currency','free')),
                SUM(promise_level!='unclear')
         FROM placement_terms
         """
@@ -738,9 +742,12 @@ def build_terms_report(out_db: str | Path) -> dict[str, Any]:
         rows = [
             dict(row) for row in connection.execute("SELECT * FROM placement_terms")
         ]
+        metadata = dict(connection.execute("SELECT key,value FROM terms_meta"))
         report: dict[str, Any] = {
-            "schema_version": TERMS_SCHEMA_VERSION,
-            "extractor_version": TERMS_EXTRACTOR_VERSION,
+            "schema_version": int(metadata.get("schema_version", TERMS_SCHEMA_VERSION)),
+            "extractor_version": int(
+                metadata.get("extractor_version", TERMS_EXTRACTOR_VERSION)
+            ),
             "pages": len(rows),
             "fetch_status": dict(Counter(str(row["fetch_status"]) for row in rows)),
             "promise_level": dict(Counter(str(row["promise_level"]) for row in rows)),
@@ -776,7 +783,10 @@ def build_terms_report(out_db: str | Path) -> dict[str, Any]:
                 SELECT currency,COUNT(*),MIN(price_min),MAX(price_max),
                        AVG((price_min+price_max)/2.0)
                 FROM placement_terms
-                WHERE price_status='advertised' AND currency IS NOT NULL
+                WHERE price_status='advertised'
+                  AND currency IS NOT NULL
+                  AND price_min IS NOT NULL
+                  AND price_max IS NOT NULL
                 GROUP BY currency ORDER BY currency
                 """
             )
