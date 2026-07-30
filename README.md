@@ -197,6 +197,28 @@ domains. HTTP 403/429, uncertain `robots.txt` responses and transient server
 errors are routed to review instead of being treated as proof that a site is
 dead. Re-running the same command resumes from the page-level checkpoint.
 
+HTML enrichment is a separate resumable stage. It reads every exact archived
+WARC record, fetches current HTML only where the preceding robots check
+allowed it, and inspects a bounded set of sitemaps. Full HTML is processed in
+memory and discarded; the output contains only scoring features and bounded
+text fields:
+
+```bash
+python pipeline.py outreach enrich \
+  --db data/ops/outreach/outreach.db \
+  --validation-db data/ops/outreach/live-validation.db \
+  --out-db data/ops/outreach/html-enrichment.db \
+  --report data/ops/outreach/html-enrichment-report.json \
+  --export data/ops/outreach/scoring-features.csv \
+  --fetch-source s3
+```
+
+The `scoring_features` view selects current HTML when available and otherwise
+falls back to the Common Crawl snapshot. `best_lastmod` keeps its provenance:
+an exact sitemap match has priority, followed by current HTML/HTTP metadata and
+then archived HTML/HTTP metadata. Sitemap freshness remains a weighted signal,
+not a standalone approval or rejection rule.
+
 ## Adaptive discovery: baseline и feedback
 
 Воспроизводимый baseline перед изменением правил или порогов:

@@ -12,6 +12,11 @@ from typing import Any
 
 from cc_links.exclusions import is_excluded, load_excluded_domains
 from cc_links.outreach_discovery import discover_outreach
+from cc_links.outreach_enrich import (
+    EnrichmentConfig,
+    enrich_outreach,
+    write_enrichment_report,
+)
 from cc_links.outreach_live import (
     ValidationConfig,
     qualify_outreach,
@@ -130,6 +135,30 @@ def add_outreach_parser(subparsers: Any) -> argparse.ArgumentParser:
     qualify.add_argument("--retry-backoff", type=float, default=1.0)
     qualify.add_argument("--max-bytes", type=int, default=1_500_000)
     qualify.add_argument("--no-resume", action="store_true")
+
+    enrich = commands.add_parser(
+        "enrich",
+        help="Extract scoring features from live and archived HTML plus sitemaps",
+    )
+    enrich.add_argument("--db", required=True, help="Read-only outreach discovery DB")
+    enrich.add_argument(
+        "--validation-db", required=True, help="Completed live-validation DB"
+    )
+    enrich.add_argument("--out-db", required=True, help="Separate enrichment DB")
+    enrich.add_argument("--report", required=True)
+    enrich.add_argument("--export", help="Scoring-ready page CSV")
+    enrich.add_argument("--warc-workers", type=int, default=24)
+    enrich.add_argument("--live-workers", type=int, default=20)
+    enrich.add_argument("--sitemap-workers", type=int, default=20)
+    enrich.add_argument("--timeout", type=float, default=15.0)
+    enrich.add_argument("--retries", type=int, default=2)
+    enrich.add_argument("--retry-backoff", type=float, default=1.0)
+    enrich.add_argument("--max-html-bytes", type=int, default=5_000_000)
+    enrich.add_argument("--max-sitemap-bytes", type=int, default=5_000_000)
+    enrich.add_argument("--max-sitemap-documents", type=int, default=4)
+    enrich.add_argument(
+        "--fetch-source", choices=["s3", "https"], default="s3"
+    )
     return parser
 
 
@@ -218,6 +247,36 @@ def run_outreach_command(args: argparse.Namespace) -> None:
         )
         LOGGER.info(
             "outreach qualification complete: %s",
+            json.dumps(
+                {"run": asdict(summary), "report": report},
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        )
+        return
+    if command == "enrich":
+        config = EnrichmentConfig(
+            max_html_bytes=args.max_html_bytes,
+            max_sitemap_bytes=args.max_sitemap_bytes,
+            timeout=args.timeout,
+            retries=args.retries,
+            retry_backoff=args.retry_backoff,
+            max_sitemap_documents=args.max_sitemap_documents,
+        )
+        summary = enrich_outreach(
+            input_db=args.db,
+            validation_db=args.validation_db,
+            out_db=args.out_db,
+            warc_workers=args.warc_workers,
+            live_workers=args.live_workers,
+            sitemap_workers=args.sitemap_workers,
+            fetch_source=args.fetch_source,
+            config=config,
+            progress=LOGGER.info,
+        )
+        report = write_enrichment_report(args.out_db, args.report, args.export)
+        LOGGER.info(
+            "outreach enrichment complete: %s",
             json.dumps(
                 {"run": asdict(summary), "report": report},
                 ensure_ascii=False,
