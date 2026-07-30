@@ -30,7 +30,7 @@ from cc_links.fetch import enable_s3, fetch_warc_record
 from cc_links.outreach_enrich import parse_warc_html
 
 TERMS_SCHEMA_VERSION = 2
-TERMS_EXTRACTOR_VERSION = 7
+TERMS_EXTRACTOR_VERSION = 8
 
 TERMS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS terms_meta (
@@ -272,6 +272,8 @@ PRICE_DIRECT_CONTEXT_RE = re.compile(
     r"(?:fees?|charges?|prices?|pricing|costs?)|"
     r"(?:guest|sponsored)\s+(?:post|article)\s+"
     r"(?:fees?|prices?|pricing|costs?|packages?)|"
+    r"guest\s+post\s+submission|contextual\s+brand\s+mention|"
+    r"(?:product|brand)\s+announcement|"
     r"link\s+insertion(?:\s+(?:fees?|prices?|pricing|costs?))?|"
     r"(?:packages?|plans?)\s+(?:start(?:ing)?\s+at|from|at|for|price|fee|cost)|"
     r"(?:prices?|pricing|fees?|rates?)\s*(?:start(?:ing)?\s+at|from|:)|"
@@ -303,6 +305,10 @@ PRICE_NONPLACEMENT_PREFIX_RE = re.compile(
     r"\b(?:save|bonus|earn|payout|funding|donation|donacion|donacao|"
     r"books?\s+under|free\s+shipping|salary|prize|worth|valued\s+at)"
     r"(?:\s+\w+){0,5}\s*[:\-]?\s*$",
+    re.IGNORECASE,
+)
+PRICE_RECURRING_SUFFIX_RE = re.compile(
+    r"^\s*(?:/|per\s+)?(?:month|monthly|year|yearly|annual|annually)\b",
     re.IGNORECASE,
 )
 
@@ -515,18 +521,22 @@ def extract_placement_terms(html: str) -> dict[str, Any]:
             amount = _price_number(amount_text)
             currency = CURRENCY_MAP.get(token.upper(), CURRENCY_MAP.get(token))
             prefix = segment[max(0, match.start() - 100) : match.start()]
+            suffix = segment[match.end() : min(len(segment), match.end() + 50)]
             local_context = segment[
                 max(0, match.start() - 180) : min(len(segment), match.end() + 180)
             ]
             addon_price = bool(PRICE_ADDON_PREFIX_RE.search(prefix))
             nonplacement_price = bool(PRICE_NONPLACEMENT_PREFIX_RE.search(prefix))
+            recurring_price = bool(PRICE_RECURRING_SUFFIX_RE.search(suffix))
             if amount is None or not currency or addon_price or nonplacement_price:
                 continue
             option = (amount, currency, segment)
             if option in seen_price_options:
                 continue
             seen_price_options.add(option)
-            direct_context = bool(PRICE_DIRECT_CONTEXT_RE.search(local_context))
+            direct_context = bool(
+                PRICE_DIRECT_CONTEXT_RE.search(local_context) and not recurring_price
+            )
             target = prices if direct_context else review_prices
             target.append((amount, currency))
             price_evidence.append(

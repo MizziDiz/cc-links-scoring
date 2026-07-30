@@ -753,10 +753,7 @@ def build_value_scores(
                 terms.get("price_status") == "advertised"
                 and terms.get("price_min") is not None
             ):
-                advertised = (
-                    float(terms["price_min"])
-                    + float(terms.get("price_max") or terms["price_min"])
-                ) / 2.0
+                advertised = float(terms["price_min"])
             currency = str(terms.get("currency") or "").upper() or None
             normalized_price = (
                 round(advertised * rates[currency], 2)

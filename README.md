@@ -311,6 +311,10 @@ python pipeline.py outreach value \
 
 `fx.csv` has `currency,rate_to_base`; currencies without an explicit rate are
 not compared. Expected contact cost is `contact_cost / publication_probability`.
+For pages advertising several one-time packages, comparable economics uses the
+lowest explicit entry price; the full minimum/maximum range remains in the
+terms export. Recurring monthly or annual plans are not treated as a one-off
+placement fee.
 Content cost is omitted only when the publisher explicitly promises to write
 the article. Expected effectiveness multiplies domain strength, promised
 publication probability, placement quality and current page qualification.

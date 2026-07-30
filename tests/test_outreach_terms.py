@@ -155,6 +155,18 @@ class PlacementTermsTests(unittest.TestCase):
         self.assertEqual(result["price_status"], "advertised_review")
         self.assertEqual(result["price_min"], 50_000)
 
+    def test_recurring_plan_is_not_used_as_placement_fee(self) -> None:
+        result = extract_placement_terms(
+            """
+            <div>Guest Post Submission $399 One-time</div>
+            <div>Monthly contributor plans: $799 per month</div>
+            """
+        )
+
+        self.assertEqual(result["price_status"], "advertised")
+        self.assertEqual(result["price_min"], 399)
+        self.assertEqual(result["price_max"], 399)
+
     def test_mixed_currency_prices_are_not_silently_compared(self) -> None:
         result = extract_placement_terms(
             "<p>Guest post publication fee: USD 50 or EUR 45 per article.</p>"
