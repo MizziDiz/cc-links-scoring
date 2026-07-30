@@ -254,6 +254,7 @@ class TermsSummary:
     """Counters for a resumable terms extraction run."""
 
     input_pages: int
+    scheduled_pages: int
     completed_pages: int
     successful_pages: int
     priced_pages: int
@@ -609,6 +610,7 @@ def build_placement_terms(
     input_db: str | Path,
     out_db: str | Path,
     workers: int = 24,
+    max_pages: int | None = None,
     fetch_source: str = "s3",
     config: TermsConfig | None = None,
     progress: Callable[[str], None] | None = None,
@@ -616,18 +618,21 @@ def build_placement_terms(
     """Fetch exact archived pages and build a resumable commercial-terms DB."""
     if workers < 1:
         raise ValueError("workers must be positive")
+    if max_pages is not None and max_pages < 1:
+        raise ValueError("max_pages must be positive")
     if fetch_source not in ("s3", "https"):
         raise ValueError("fetch_source must be s3 or https")
     config = config or TermsConfig()
     input_path = Path(input_db)
     rows = _load_pages(input_path)
+    scheduled_rows = rows[:max_pages] if max_pages is not None else rows
     connection = _init_terms_db(Path(out_db), input_db=input_path, config=config)
     if fetch_source == "s3":
         enable_s3(pool_size=max(32, workers * 2))
     completed = {
         str(row[0]) for row in connection.execute("SELECT url FROM placement_terms")
     }
-    pending = [row for row in rows if str(row["url"]) not in completed]
+    pending = [row for row in scheduled_rows if str(row["url"]) not in completed]
     if progress:
         progress(f"terms: resume={len(completed)} pending={len(pending)}")
     started = time.monotonic()
@@ -640,7 +645,8 @@ def build_placement_terms(
             if progress and (index % 100 == 0 or index == len(pending)):
                 elapsed = max(0.001, time.monotonic() - started)
                 progress(
-                    f"terms: {len(completed) + index}/{len(rows)} "
+                    f"terms: {min(len(completed), len(scheduled_rows)) + index}/"
+                    f"{len(scheduled_rows)} "
                     f"rate={index / elapsed * 60:.1f}/min"
                 )
     counts = connection.execute(
@@ -655,6 +661,7 @@ def build_placement_terms(
     connection.close()
     return TermsSummary(
         input_pages=len(rows),
+        scheduled_pages=len(scheduled_rows),
         completed_pages=int(counts[0] or 0),
         successful_pages=int(counts[1] or 0),
         priced_pages=int(counts[2] or 0),

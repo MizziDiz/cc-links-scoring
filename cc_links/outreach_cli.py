@@ -197,6 +197,11 @@ def add_outreach_parser(subparsers: Any) -> argparse.ArgumentParser:
     terms.add_argument("--db", required=True, help="Read-only outreach discovery DB")
     terms.add_argument("--out-db", required=True, help="Separate resumable terms DB")
     terms.add_argument("--workers", type=int, default=24)
+    terms.add_argument(
+        "--max-pages",
+        type=int,
+        help="Deterministic pilot prefix; rerun without it to resume the full set",
+    )
     terms.add_argument("--max-html-bytes", type=int, default=5_000_000)
     terms.add_argument("--retries", type=int, default=2)
     terms.add_argument("--retry-backoff", type=float, default=1.0)
@@ -386,6 +391,7 @@ def run_outreach_command(args: argparse.Namespace) -> None:
             input_db=args.db,
             out_db=args.out_db,
             workers=args.workers,
+            max_pages=args.max_pages,
             fetch_source=args.fetch_source,
             config=terms_config,
             progress=LOGGER.info,
