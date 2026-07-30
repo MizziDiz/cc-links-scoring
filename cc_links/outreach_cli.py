@@ -12,6 +12,11 @@ from typing import Any
 
 from cc_links.exclusions import is_excluded, load_excluded_domains
 from cc_links.outreach_discovery import discover_outreach
+from cc_links.outreach_live import (
+    ValidationConfig,
+    qualify_outreach,
+    write_qualification_outputs,
+)
 from cc_links.outreach_report import (
     build_pilot_report,
     evaluate_review_csv,
@@ -110,6 +115,21 @@ def add_outreach_parser(subparsers: Any) -> argparse.ArgumentParser:
     )
     audit.add_argument("--input", required=True)
     audit.add_argument("--out", required=True)
+
+    qualify = commands.add_parser(
+        "qualify",
+        help="Run resumable, polite GET-only checks over every discovered page",
+    )
+    qualify.add_argument("--db", required=True, help="Read-only outreach discovery DB")
+    qualify.add_argument("--out-db", required=True, help="Separate checkpoint/result DB")
+    qualify.add_argument("--report", required=True, help="Qualification summary JSON")
+    qualify.add_argument("--export-dir", help="Status-separated domain CSV directory")
+    qualify.add_argument("--workers", type=int, default=20)
+    qualify.add_argument("--timeout", type=float, default=15.0)
+    qualify.add_argument("--retries", type=int, default=2)
+    qualify.add_argument("--retry-backoff", type=float, default=1.0)
+    qualify.add_argument("--max-bytes", type=int, default=1_500_000)
+    qualify.add_argument("--no-resume", action="store_true")
     return parser
 
 
@@ -176,6 +196,33 @@ def run_outreach_command(args: argparse.Namespace) -> None:
             "pilot gate %s; report=%s",
             "PASSED" if result["gate"]["passed"] else "FAILED",
             Path(args.out),
+        )
+        return
+    if command == "qualify":
+        config = ValidationConfig(
+            timeout=args.timeout,
+            retries=args.retries,
+            retry_backoff=args.retry_backoff,
+            max_bytes=args.max_bytes,
+        )
+        summary = qualify_outreach(
+            input_db=args.db,
+            out_db=args.out_db,
+            workers=args.workers,
+            config=config,
+            resume=not args.no_resume,
+            progress=LOGGER.info,
+        )
+        report = write_qualification_outputs(
+            args.out_db, args.report, args.export_dir
+        )
+        LOGGER.info(
+            "outreach qualification complete: %s",
+            json.dumps(
+                {"run": asdict(summary), "report": report},
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
         )
         return
     raise ValueError(f"unknown outreach command: {command}")

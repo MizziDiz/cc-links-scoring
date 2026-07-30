@@ -175,6 +175,28 @@ python pipeline.py outreach audit \
 Архитектура, инварианты и последующие этапы Web Graph/live qualification
 описаны в `docs/outreach-pipeline-plan.md`.
 
+### Full GET-only outreach qualification
+
+Live qualification is an optional, resumable stage. It reads the discovery
+database without modifying it, respects `robots.txt`, checks each domain with
+per-domain concurrency of one, never submits forms or authenticates, and does
+not retain HTML bodies. Results and checkpoints are written to a separate
+SQLite database:
+
+```bash
+python pipeline.py outreach qualify \
+  --db data/ops/outreach/outreach.db \
+  --out-db data/ops/outreach/live-validation.db \
+  --report data/ops/outreach/live-validation-report.json \
+  --export-dir data/ops/outreach/live-exports \
+  --workers 20
+```
+
+The exports separate `approved`, `review`, `rejected` and `unreachable`
+domains. HTTP 403/429, uncertain `robots.txt` responses and transient server
+errors are routed to review instead of being treated as proof that a site is
+dead. Re-running the same command resumes from the page-level checkpoint.
+
 ## Adaptive discovery: baseline и feedback
 
 Воспроизводимый baseline перед изменением правил или порогов:
