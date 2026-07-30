@@ -282,6 +282,10 @@ Import a provider export. Accepted headers include `domain`, `provider`, `DR`,
 Missing metrics remain null and are never silently imputed.
 
 ```bash
+python pipeline.py outreach metrics-template \
+  --scores-db data/ops/outreach/outreach-scores-v2.db \
+  --out data/ops/outreach/domain-metrics-template.csv
+
 python pipeline.py outreach metrics \
   --input data/ops/outreach/domain-metrics.csv \
   --out-db data/ops/outreach/outreach-value.db

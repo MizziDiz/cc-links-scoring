@@ -331,6 +331,44 @@ def import_domain_metrics(csv_path: str | Path, out_db: str | Path) -> dict[str,
     return {"imported": imported, "skipped": skipped}
 
 
+def write_metrics_template(scores_db: str | Path, csv_path: str | Path) -> int:
+    """Write one provider-neutral blank row per scored registered domain."""
+    rows = _read_rows(
+        scores_db,
+        """
+        SELECT registered_domain,
+               MAX(CASE WHEN score_band='high' THEN url END) AS high_url,
+               MAX(url) AS fallback_url,
+               MAX(combined_score) AS best_score
+        FROM page_scores
+        GROUP BY registered_domain
+        ORDER BY registered_domain
+        """,
+    )
+    fieldnames = [
+        "registered_domain",
+        "example_url",
+        "best_page_score",
+        "provider",
+        "as_of",
+        *METRIC_FIELDS,
+    ]
+    path = Path(csv_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(
+                {
+                    "registered_domain": row["registered_domain"],
+                    "example_url": row["high_url"] or row["fallback_url"],
+                    "best_page_score": row["best_score"],
+                }
+            )
+    return len(rows)
+
+
 def import_outcomes(csv_path: str | Path, out_db: str | Path) -> dict[str, int]:
     """Import the observed funnel used to recalibrate predicted probabilities."""
     connection = initialize_value_db(out_db)

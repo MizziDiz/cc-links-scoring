@@ -14,6 +14,7 @@ from cc_links.outreach_value import (
     evaluate_page_value,
     import_domain_metrics,
     placement_quality_score,
+    write_metrics_template,
 )
 
 
@@ -168,6 +169,9 @@ class ValuePipelineTests(unittest.TestCase):
                 )
             imported = import_domain_metrics(metrics_csv, output)
             self.assertEqual(imported["imported"], 1)
+            template_csv = root / "metrics-template.csv"
+            self.assertEqual(write_metrics_template(scores, template_csv), 1)
+            self.assertIn("example.com", template_csv.read_text(encoding="utf-8"))
 
             report = build_value_scores(
                 scores_db=scores,

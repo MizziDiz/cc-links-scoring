@@ -39,6 +39,7 @@ from cc_links.outreach_value import (
     build_value_scores,
     import_domain_metrics,
     import_outcomes,
+    write_metrics_template,
     write_value_outputs,
 )
 from cc_links.partmap import build_part_map
@@ -216,6 +217,13 @@ def add_outreach_parser(subparsers: Any) -> argparse.ArgumentParser:
     )
     metrics.add_argument("--input", required=True)
     metrics.add_argument("--out-db", required=True, help="Value SQLite DB")
+
+    metrics_template = commands.add_parser(
+        "metrics-template",
+        help="Export one blank provider-neutral metrics row per domain",
+    )
+    metrics_template.add_argument("--scores-db", required=True)
+    metrics_template.add_argument("--out", required=True)
 
     outcomes = commands.add_parser(
         "outcomes",
@@ -419,6 +427,10 @@ def run_outreach_command(args: argparse.Namespace) -> None:
             "domain metrics import complete: %s",
             json.dumps(metrics_summary, ensure_ascii=False, sort_keys=True),
         )
+        return
+    if command == "metrics-template":
+        domain_count = write_metrics_template(args.scores_db, args.out)
+        LOGGER.info("wrote %d metric-template domains to %s", domain_count, args.out)
         return
     if command == "outcomes":
         outcomes_summary = import_outcomes(args.input, args.out_db)
