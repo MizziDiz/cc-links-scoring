@@ -32,6 +32,7 @@ from cc_links.outreach_score import build_page_scores, write_score_outputs
 from cc_links.outreach_terms import (
     TermsConfig,
     build_placement_terms,
+    write_terms_outputs,
 )
 from cc_links.outreach_value import (
     CostConfig,
@@ -206,6 +207,8 @@ def add_outreach_parser(subparsers: Any) -> argparse.ArgumentParser:
     terms.add_argument("--retries", type=int, default=2)
     terms.add_argument("--retry-backoff", type=float, default=1.0)
     terms.add_argument("--fetch-source", choices=["s3", "https"], default="s3")
+    terms.add_argument("--report", help="Optional terms summary JSON")
+    terms.add_argument("--export", help="Optional full terms CSV")
 
     metrics = commands.add_parser(
         "metrics",
@@ -396,9 +399,18 @@ def run_outreach_command(args: argparse.Namespace) -> None:
             config=terms_config,
             progress=LOGGER.info,
         )
+        terms_report = write_terms_outputs(
+            args.out_db,
+            report_path=args.report,
+            csv_path=args.export,
+        )
         LOGGER.info(
             "outreach terms extraction complete: %s",
-            json.dumps(asdict(terms_summary), ensure_ascii=False, sort_keys=True),
+            json.dumps(
+                {"run": asdict(terms_summary), "report": terms_report},
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
         )
         return
     if command == "metrics":

@@ -87,6 +87,27 @@ class PlacementTermsTests(unittest.TestCase):
         self.assertEqual(result["price_status"], "conflicting")
         self.assertEqual(result["commercial_model"], "mixed")
 
+    def test_navigation_words_do_not_imply_placement_location(self) -> None:
+        result = extract_placement_terms(
+            """
+            <nav>Home Page | Social Media | Redes sociales</nav>
+            <h1>Write for us</h1>
+            """
+        )
+
+        self.assertEqual(result["placement_locations"], [])
+
+    def test_additional_link_fee_is_not_the_base_publication_price(self) -> None:
+        result = extract_placement_terms(
+            """
+            <p>Pricing Details: Standard article $9.99 per article.
+            Additional links: $7.99 each.</p>
+            """
+        )
+
+        self.assertEqual(result["price_min"], 9.99)
+        self.assertEqual(result["price_max"], 9.99)
+
 
 if __name__ == "__main__":
     unittest.main()

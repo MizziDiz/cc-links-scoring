@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import json
 import re
 import sqlite3
 import time
 import unicodedata
+from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
@@ -25,7 +27,7 @@ from cc_links.fetch import enable_s3, fetch_warc_record
 from cc_links.outreach_enrich import parse_warc_html
 
 TERMS_SCHEMA_VERSION = 2
-TERMS_EXTRACTOR_VERSION = 2
+TERMS_EXTRACTOR_VERSION = 3
 
 TERMS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS terms_meta (
@@ -153,11 +155,16 @@ LOCATION_PATTERNS: dict[str, re.Pattern[str]] = {
         re.IGNORECASE,
     ),
     "homepage": re.compile(
-        r"\b(?:home\s?page|pagina\s+principal|pagina\s+inicial)\b", re.IGNORECASE
+        r"\b(?:(?:featured|published|placed)\s+on\s+(?:the\s+)?home\s?page|"
+        r"home\s?page\s+placement|"
+        r"(?:publicad[oa]|destacad[oa])\s+en\s+(?:la\s+)?pagina\s+principal|"
+        r"(?:publicad[oa]|destacad[oa])\s+na\s+pagina\s+inicial)\b",
+        re.IGNORECASE,
     ),
     "social_promotion": re.compile(
         r"\b(?:shared|promoted)\s+on\s+(?:our\s+)?social|"
-        r"(?:redes\s+sociales|redes\s+sociais)\b",
+        r"(?:compartid[oa]|promocionad[oa])\s+en\s+(?:nuestras\s+)?redes\s+sociales|"
+        r"(?:compartilhad[oa]|promovid[oa])\s+nas\s+(?:nossas\s+)?redes\s+sociais\b",
         re.IGNORECASE,
     ),
 }
@@ -235,6 +242,11 @@ PRICE_EXCLUSION_RE = re.compile(
     r"professional\s+(?:editing|correction)|"
     r"(?:edicion|correccion)\s+profesional|"
     r"criacao\s+de\s+conteudo)\b",
+    re.IGNORECASE,
+)
+PRICE_ADDON_PREFIX_RE = re.compile(
+    r"\b(?:additional|extra|optional)\s+(?:links?|backlinks?)"
+    r"(?:\s+(?:costs?|fee))?\s*[:\-]?\s*$",
     re.IGNORECASE,
 )
 
@@ -421,9 +433,17 @@ def extract_placement_terms(html: str) -> dict[str, Any]:
         amount = _price_number(amount_text)
         currency = CURRENCY_MAP.get(token.upper(), CURRENCY_MAP.get(token))
         context = text[max(0, match.start() - 180) : match.end() + 180]
+        prefix = text[max(0, match.start() - 90) : match.start()]
         price_context = bool(PLACEMENT_PRICE_CONTEXT_RE.search(context))
         excluded_context = bool(PRICE_EXCLUSION_RE.search(context))
-        if amount is not None and currency and price_context and not excluded_context:
+        addon_price = bool(PRICE_ADDON_PREFIX_RE.search(prefix))
+        if (
+            amount is not None
+            and currency
+            and price_context
+            and not excluded_context
+            and not addon_price
+        ):
             prices.append((amount, currency))
             matches.append(("commercial:advertised_price", match))
     currencies = sorted({currency for _, currency in prices})
@@ -708,3 +728,98 @@ def build_placement_terms(
         priced_pages=int(counts[2] or 0),
         explicit_promise_pages=int(counts[3] or 0),
     )
+
+
+def build_terms_report(out_db: str | Path) -> dict[str, Any]:
+    """Summarize term coverage and distributions without changing the DB."""
+    connection = sqlite3.connect(f"file:{Path(out_db)}?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    try:
+        rows = [
+            dict(row) for row in connection.execute("SELECT * FROM placement_terms")
+        ]
+        report: dict[str, Any] = {
+            "schema_version": TERMS_SCHEMA_VERSION,
+            "extractor_version": TERMS_EXTRACTOR_VERSION,
+            "pages": len(rows),
+            "fetch_status": dict(Counter(str(row["fetch_status"]) for row in rows)),
+            "promise_level": dict(Counter(str(row["promise_level"]) for row in rows)),
+            "price_status": dict(Counter(str(row["price_status"]) for row in rows)),
+            "commercial_model": dict(
+                Counter(str(row["commercial_model"]) for row in rows)
+            ),
+            "permanence": dict(Counter(str(row["permanence"]) for row in rows)),
+            "content_responsibility": dict(
+                Counter(str(row["content_responsibility"]) for row in rows)
+            ),
+        }
+        for field in (
+            "placement_types",
+            "link_attributes",
+            "placement_locations",
+        ):
+            report[field] = dict(
+                Counter(
+                    item for row in rows for item in json.loads(str(row[field]) or "[]")
+                )
+            )
+        report["advertised_price"] = [
+            {
+                "currency": str(row[0]),
+                "pages": int(row[1]),
+                "minimum": round(float(row[2]), 2),
+                "maximum": round(float(row[3]), 2),
+                "average_midpoint": round(float(row[4]), 2),
+            }
+            for row in connection.execute(
+                """
+                SELECT currency,COUNT(*),MIN(price_min),MAX(price_max),
+                       AVG((price_min+price_max)/2.0)
+                FROM placement_terms
+                WHERE price_status='advertised' AND currency IS NOT NULL
+                GROUP BY currency ORDER BY currency
+                """
+            )
+        ]
+        report["quick_check"] = str(
+            connection.execute("PRAGMA quick_check").fetchone()[0]
+        )
+        return report
+    finally:
+        connection.close()
+
+
+def write_terms_outputs(
+    out_db: str | Path,
+    *,
+    report_path: str | Path | None = None,
+    csv_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Write a deterministic JSON summary and optional full terms CSV."""
+    report = build_terms_report(out_db)
+    if report_path:
+        path = Path(report_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    if csv_path:
+        connection = sqlite3.connect(f"file:{Path(out_db)}?mode=ro", uri=True)
+        connection.row_factory = sqlite3.Row
+        try:
+            rows = list(
+                connection.execute(
+                    "SELECT * FROM placement_terms ORDER BY registered_domain,url"
+                )
+            )
+        finally:
+            connection.close()
+        path = Path(csv_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8", newline="") as handle:
+            if rows:
+                writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
+                writer.writeheader()
+                writer.writerows(dict(row) for row in rows)
+    return report
