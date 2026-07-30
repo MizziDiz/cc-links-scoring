@@ -1,7 +1,7 @@
 import io
 import sqlite3
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from warcio.statusandheaders import StatusAndHeaders
 from warcio.warcwriter import WARCWriter
@@ -9,6 +9,7 @@ from warcio.warcwriter import WARCWriter
 from cc_links.outreach_enrich import (
     ENRICHMENT_SCHEMA,
     EnrichmentConfig,
+    _get_limited,
     _save_snapshot,
     check_domain_sitemaps,
     extract_html_features,
@@ -88,6 +89,27 @@ class HtmlFeatureTests(unittest.TestCase):
 
 
 class WarcAndSitemapTests(unittest.TestCase):
+    def test_sitemap_body_is_read_in_bounded_chunks(self):
+        response = Mock()
+        response.status_code = 200
+        response.url = "https://example.com/sitemap.xml"
+        response.raw.read.side_effect = [b"a" * 65_536, b"b" * 10, b""]
+        session = Mock()
+        session.get.return_value = response
+
+        status, final_url, payload = _get_limited(
+            session,
+            response.url,
+            EnrichmentConfig(timeout=8),
+            100_000,
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(final_url, response.url)
+        self.assertEqual(len(payload), 65_546)
+        self.assertEqual(response.raw.read.call_args_list[0].args[0], 65_536)
+        response.close.assert_called_once()
+
     def test_relative_robots_sitemap_is_resolved_against_origin(self):
         calls: list[str] = []
 

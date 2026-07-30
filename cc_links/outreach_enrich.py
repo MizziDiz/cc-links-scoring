@@ -854,6 +854,7 @@ def _get_limited(
     config: EnrichmentConfig,
     limit: int,
 ) -> tuple[int, str, bytes]:
+    deadline = time.monotonic() + config.timeout
     response = session.get(
         url,
         timeout=(min(10.0, config.timeout), config.timeout),
@@ -865,7 +866,20 @@ def _get_limited(
         stream=True,
     )
     try:
-        payload = response.raw.read(limit + 1, decode_content=True)
+        chunks: list[bytes] = []
+        total = 0
+        while total <= limit:
+            if time.monotonic() >= deadline:
+                raise Timeout(f"sitemap response exceeded {config.timeout}s")
+            chunk = response.raw.read(
+                min(65_536, limit + 1 - total),
+                decode_content=True,
+            )
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+        payload = b"".join(chunks)
     finally:
         response.close()
     return response.status_code, response.url, payload
