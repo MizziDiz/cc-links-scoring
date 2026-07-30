@@ -424,7 +424,7 @@ def import_outcomes(csv_path: str | Path, out_db: str | Path) -> dict[str, int]:
 def aggregate_domain_metrics(
     rows: Sequence[Mapping[str, Any]],
 ) -> dict[str, float | None]:
-    """Combine multiple providers without pretending their branded scores are equal."""
+    """Average repeated observations of the same canonical provider field."""
 
     def average(field: str) -> float | None:
         values = [float(row[field]) for row in rows if row.get(field) is not None]
@@ -440,20 +440,17 @@ def domain_strength_components(
 ]:
     """Normalize authority, flow, traffic and relevance with missing-data awareness."""
     reasons: list[str] = []
-    authority_values = [
-        float(value)
-        for value in (
-            metrics.get("domain_rating"),
-            metrics.get("domain_authority"),
-            metrics.get("authority_score"),
-        )
-        if value is not None
-    ]
-    authority = (
-        _clamp(sum(authority_values) / len(authority_values))
-        if authority_values
-        else None
-    )
+    authority = None
+    for authority_field in (
+        "domain_rating",
+        "authority_score",
+        "domain_authority",
+    ):
+        authority_value = metrics.get(authority_field)
+        if authority_value is not None:
+            authority = _clamp(float(authority_value))
+            reasons.append(f"authority:{authority_field}")
+            break
 
     trust_flow = metrics.get("trust_flow")
     citation_flow = metrics.get("citation_flow")

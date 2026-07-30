@@ -17,11 +17,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from botocore.exceptions import BotoCoreError, ClientError
-from lxml import etree
-from lxml import html as lxml_html
+from botocore.exceptions import (  # type: ignore[import-untyped]
+    BotoCoreError,
+    ClientError,
+)
+from lxml import etree  # type: ignore[import-untyped]
+from lxml import html as lxml_html  # type: ignore[import-untyped]
 from requests.exceptions import RequestException
-from warcio.exceptions import ArchiveLoadFailed
+from warcio.exceptions import ArchiveLoadFailed  # type: ignore[import-untyped]
 
 from cc_links.fetch import enable_s3, fetch_warc_record
 from cc_links.outreach_enrich import parse_warc_html
