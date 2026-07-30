@@ -30,7 +30,7 @@ from cc_links.fetch import enable_s3, fetch_warc_record
 from cc_links.outreach_enrich import parse_warc_html
 
 TERMS_SCHEMA_VERSION = 2
-TERMS_EXTRACTOR_VERSION = 6
+TERMS_EXTRACTOR_VERSION = 7
 
 TERMS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS terms_meta (
@@ -275,6 +275,7 @@ PRICE_DIRECT_CONTEXT_RE = re.compile(
     r"link\s+insertion(?:\s+(?:fees?|prices?|pricing|costs?))?|"
     r"(?:packages?|plans?)\s+(?:start(?:ing)?\s+at|from|at|for|price|fee|cost)|"
     r"(?:prices?|pricing|fees?|rates?)\s*(?:start(?:ing)?\s+at|from|:)|"
+    r"(?:single|multiple)\s+posts?|"
     r"(?:per|each)\s+(?:article|post|placement)|"
     r"one[-\s]?time\s+(?:placement|publication)|"
     r"tarifa\s+de\s+publicacion|precio\s+por\s+articulo|"

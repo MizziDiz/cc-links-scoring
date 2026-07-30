@@ -138,6 +138,15 @@ class PlacementTermsTests(unittest.TestCase):
         self.assertEqual(result["price_min"], 170)
         self.assertEqual(result["price_max"], 170)
 
+    def test_labeled_post_options_are_direct_prices(self) -> None:
+        result = extract_placement_terms(
+            "<div><p>Single Post - $30</p><p>Multiple Posts (up to 5): $99</p></div>"
+        )
+
+        self.assertEqual(result["price_status"], "advertised")
+        self.assertEqual(result["price_min"], 30)
+        self.assertEqual(result["price_max"], 99)
+
     def test_weak_price_context_requires_review(self) -> None:
         result = extract_placement_terms(
             "<p>Guest post topic: tell us how you sold a painting for $50,000.</p>"
