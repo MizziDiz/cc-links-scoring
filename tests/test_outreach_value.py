@@ -186,7 +186,8 @@ class ValuePipelineTests(unittest.TestCase):
             row = connection.execute(
                 """
                 SELECT domain_strength_score,placement_quality_score,
-                       expected_total_cost,evaluation_status,value_reasons
+                       expected_total_cost,evaluation_status,value_reasons,
+                       best_lastmod
                 FROM page_values
                 """
             ).fetchone()
@@ -196,6 +197,7 @@ class ValuePipelineTests(unittest.TestCase):
             self.assertGreater(row[2], 140)
             self.assertEqual(row[3], "complete")
             self.assertIn("promise:guaranteed", json.loads(row[4]))
+            self.assertIsNone(row[5])
 
 
 if __name__ == "__main__":

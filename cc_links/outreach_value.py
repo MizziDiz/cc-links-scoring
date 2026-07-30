@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-VALUE_SCHEMA_VERSION = 1
+VALUE_SCHEMA_VERSION = 2
 
 VALUE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS value_meta (
@@ -60,6 +60,10 @@ CREATE TABLE IF NOT EXISTS page_values (
     registered_domain TEXT NOT NULL,
     score_band TEXT NOT NULL,
     page_quality_score REAL NOT NULL,
+    freshness_score REAL,
+    effective_freshness_score REAL,
+    best_lastmod TEXT,
+    best_lastmod_source TEXT,
     promise_level TEXT NOT NULL,
     publication_probability REAL NOT NULL,
     commercial_model TEXT NOT NULL,
@@ -153,6 +157,10 @@ PAGE_VALUE_COLUMNS = (
     "registered_domain",
     "score_band",
     "page_quality_score",
+    "freshness_score",
+    "effective_freshness_score",
+    "best_lastmod",
+    "best_lastmod_source",
     "promise_level",
     "publication_probability",
     "commercial_model",
@@ -272,6 +280,17 @@ def initialize_value_db(path: str | Path) -> sqlite3.Connection:
     connection.execute("PRAGMA journal_mode=WAL")
     connection.execute("PRAGMA synchronous=NORMAL")
     connection.executescript(VALUE_SCHEMA)
+    existing_columns = {
+        str(row[1]) for row in connection.execute("PRAGMA table_info(page_values)")
+    }
+    for name, column_type in (
+        ("freshness_score", "REAL"),
+        ("effective_freshness_score", "REAL"),
+        ("best_lastmod", "TEXT"),
+        ("best_lastmod_source", "TEXT"),
+    ):
+        if name not in existing_columns:
+            connection.execute(f"ALTER TABLE page_values ADD COLUMN {name} {column_type}")
     with connection:
         connection.execute(
             "INSERT OR REPLACE INTO value_meta(key,value) VALUES (?,?)",
@@ -662,6 +681,34 @@ def _read_rows(path: str | Path, query: str) -> list[dict[str, Any]]:
         connection.close()
 
 
+def _read_score_rows(path: str | Path) -> list[dict[str, Any]]:
+    """Read value inputs while remaining compatible with older score databases."""
+    connection = sqlite3.connect(f"file:{Path(path)}?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    try:
+        columns = {
+            str(row[1]) for row in connection.execute("PRAGMA table_info(page_scores)")
+        }
+        optional = {
+            "freshness_score": "REAL",
+            "effective_freshness_score": "REAL",
+            "best_lastmod": "TEXT",
+            "best_lastmod_source": "TEXT",
+        }
+        selections = ["url", "registered_domain", "score_band", "combined_score"]
+        selections.extend(
+            name if name in columns else f"CAST(NULL AS {sql_type}) AS {name}"
+            for name, sql_type in optional.items()
+        )
+        query = (
+            f"SELECT {','.join(selections)} FROM page_scores "
+            "ORDER BY registered_domain,url"
+        )
+        return [dict(row) for row in connection.execute(query)]
+    finally:
+        connection.close()
+
+
 def build_value_scores(
     *,
     scores_db: str | Path,
@@ -677,13 +724,7 @@ def build_value_scores(
     if len(cost_config.base_currency.strip()) != 3:
         raise ValueError("base_currency must be a three-letter currency code")
     connection = initialize_value_db(out_db)
-    score_rows = _read_rows(
-        scores_db,
-        """
-        SELECT url,registered_domain,score_band,combined_score
-        FROM page_scores ORDER BY registered_domain,url
-        """,
-    )
+    score_rows = _read_score_rows(scores_db)
     term_rows = {
         str(row["url"]): row
         for row in _read_rows(terms_db, "SELECT * FROM placement_terms")
@@ -708,7 +749,10 @@ def build_value_scores(
             advertised = None
             if terms.get("price_status") == "free":
                 advertised = 0.0
-            elif terms.get("price_min") is not None:
+            elif (
+                terms.get("price_status") == "advertised"
+                and terms.get("price_min") is not None
+            ):
                 advertised = (
                     float(terms["price_min"])
                     + float(terms.get("price_max") or terms["price_min"])
@@ -737,6 +781,10 @@ def build_value_scores(
                     score["registered_domain"],
                     score["score_band"],
                     score["combined_score"],
+                    score["freshness_score"],
+                    score["effective_freshness_score"],
+                    score["best_lastmod"],
+                    score["best_lastmod_source"],
                     terms["promise_level"],
                     terms["promise_probability"],
                     terms["commercial_model"],

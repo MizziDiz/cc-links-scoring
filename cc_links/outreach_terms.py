@@ -30,7 +30,7 @@ from cc_links.fetch import enable_s3, fetch_warc_record
 from cc_links.outreach_enrich import parse_warc_html
 
 TERMS_SCHEMA_VERSION = 2
-TERMS_EXTRACTOR_VERSION = 5
+TERMS_EXTRACTOR_VERSION = 6
 
 TERMS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS terms_meta (
@@ -80,11 +80,20 @@ GUARANTEE_RE = re.compile(
 )
 CONDITIONAL_RE = re.compile(
     r"\b(?:subject\s+to\s+(?:editorial\s+)?review|if\s+accepted|"
+    r"once\s+(?:it\s+is\s+|your\s+(?:article|submission)\s+is\s+)?approved|"
+    r"upon\s+(?:editorial\s+)?acceptance|after\s+(?:editorial\s+)?approval|"
+    r"selected\s+for\s+publication|article\s+(?:is|was)\s+chosen|"
+    r"if\s+(?:your|the)\s+(?:article|submission|content)\s+"
+    r"(?:is\s+)?(?:accepted|approved|passes|meets)|"
+    r"if\s+everything\s+(?:works\s+out|meets\s+our\s+requirements)|"
     r"submissions?\s+(?:are|will\s+be)\s+reviewed|editorial\s+approval|"
     r"we\s+reserve\s+the\s+right|(?:does\s+not|not)\s+guarantee\s+publication|"
     r"sujeto\s+a\s+(?:revision|aprobacion)|si\s+(?:es\s+)?aceptad[oa]|"
+    r"una\s+vez\s+aprobad[oa]|tras\s+(?:la\s+)?aprobacion|"
+    r"si\s+(?:el\s+)?(?:articulo|contenido)\s+cumple|"
     r"nos\s+reservamos\s+el\s+derecho|"
     r"sujeit[oa]\s+a\s+(?:revisao|avaliacao)|se\s+(?:for\s+)?aceit[oa]|"
+    r"apos\s+(?:a\s+)?aprovacao|uma\s+vez\s+aprovad[oa]|"
     r"nao\s+garantimos?\s+a\s+publicacao)\b",
     re.IGNORECASE,
 )
@@ -97,6 +106,19 @@ OPEN_SUBMISSION_RE = re.compile(
     r"publique\s+conosco|diretrizes\s+para\s+autores|"
     r"ecrivez\s+pour\s+nous|soumettre\s+un\s+article|"
     r"schreib(?:e|en)?\s+fur\s+uns|gastbeitrag\s+einreichen)\b",
+    re.IGNORECASE,
+)
+CLOSED_SUBMISSION_RE = re.compile(
+    r"\b(?:"
+    r"(?:no\s+longer|not|currently\s+not)\s+accepting\s+"
+    r"(?:guest\s+posts?|submissions?|articles?)|"
+    r"(?:guest\s+post|article|submission)\s+(?:submissions?\s+)?"
+    r"(?:are\s+)?closed|submissions?\s+(?:are\s+)?closed|"
+    r"we\s+do\s+not\s+accept\s+(?:guest\s+posts?|submissions?|articles?)|"
+    r"ya\s+no\s+aceptamos\s+(?:articulos|publicaciones|colaboraciones)|"
+    r"no\s+aceptamos\s+(?:articulos|publicaciones)\s+invitad[oa]s?|"
+    r"nao\s+aceitamos\s+(?:mais\s+)?(?:artigos|posts|submissoes)"
+    r")\b",
     re.IGNORECASE,
 )
 
@@ -225,9 +247,9 @@ TURNAROUND_RE = re.compile(
 )
 PRICE_RE = re.compile(
     r"(?:(?P<prefix>US\$|USD|EUR|GBP|BRL|INR|R\$|\$|€|£|₹)\s*"
-    r"(?P<amount1>\d[\d., ]{0,14})|"
-    r"(?P<amount2>\d[\d., ]{0,14})\s*"
-    r"(?P<suffix>USD|EUR|GBP|BRL|INR))",
+    r"(?P<amount1>(?:\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?))|"
+    r"(?P<amount2>(?:\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?))\s*"
+    r"(?P<suffix>USD|EUR|GBP|BRL|INR|\$))",
     re.IGNORECASE,
 )
 PLACEMENT_PRICE_CONTEXT_RE = re.compile(
@@ -242,6 +264,22 @@ PLACEMENT_PRICE_CONTEXT_RE = re.compile(
     r"(?:package|plan)\s+(?:price|fee|cost)|"
     r"tarifa\s+de\s+publicacion|por\s+articulo|post\s+invitado|"
     r"taxa\s+de\s+publicacao|por\s+artigo|artigo\s+patrocinado)\b",
+    re.IGNORECASE,
+)
+PRICE_DIRECT_CONTEXT_RE = re.compile(
+    r"\b(?:"
+    r"(?:publication|publishing|submission|editorial|processing)\s+"
+    r"(?:fees?|charges?|prices?|pricing|costs?)|"
+    r"(?:guest|sponsored)\s+(?:post|article)\s+"
+    r"(?:fees?|prices?|pricing|costs?|packages?)|"
+    r"link\s+insertion(?:\s+(?:fees?|prices?|pricing|costs?))?|"
+    r"(?:packages?|plans?)\s+(?:start(?:ing)?\s+at|from|at|for|price|fee|cost)|"
+    r"(?:prices?|pricing|fees?|rates?)\s*(?:start(?:ing)?\s+at|from|:)|"
+    r"(?:per|each)\s+(?:article|post|placement)|"
+    r"one[-\s]?time\s+(?:placement|publication)|"
+    r"tarifa\s+de\s+publicacion|precio\s+por\s+articulo|"
+    r"taxa\s+de\s+publicacao|preco\s+por\s+artigo"
+    r")\b",
     re.IGNORECASE,
 )
 PRICE_EXCLUSION_RE = re.compile(
@@ -268,6 +306,7 @@ PRICE_NONPLACEMENT_PREFIX_RE = re.compile(
 )
 
 PROMISE_PROBABILITY = {
+    "closed": 0.01,
     "guaranteed": 0.85,
     "conditional_review": 0.50,
     "open_submission": 0.30,
@@ -400,10 +439,13 @@ def extract_placement_terms(html: str) -> dict[str, Any]:
             return True
         return False
 
+    closed = found("promise:closed", CLOSED_SUBMISSION_RE)
     conditional = found("promise:conditional_review", CONDITIONAL_RE)
     guaranteed = found("promise:guaranteed", GUARANTEE_RE) and not conditional
     open_submission = found("promise:open_submission", OPEN_SUBMISSION_RE)
-    if guaranteed:
+    if closed:
+        promise_level = "closed"
+    elif guaranteed:
         promise_level = "guaranteed"
     elif conditional:
         promise_level = "conditional_review"
@@ -458,6 +500,7 @@ def extract_placement_terms(html: str) -> dict[str, Any]:
         break
     quote_signal = found("commercial:quote_required", QUOTE_RE)
     prices: list[tuple[float, str]] = []
+    review_prices: list[tuple[float, str]] = []
     price_evidence: list[dict[str, str]] = []
     seen_price_options: set[tuple[float, str, str]] = set()
     for segment in price_segments:
@@ -471,6 +514,9 @@ def extract_placement_terms(html: str) -> dict[str, Any]:
             amount = _price_number(amount_text)
             currency = CURRENCY_MAP.get(token.upper(), CURRENCY_MAP.get(token))
             prefix = segment[max(0, match.start() - 100) : match.start()]
+            local_context = segment[
+                max(0, match.start() - 180) : min(len(segment), match.end() + 180)
+            ]
             addon_price = bool(PRICE_ADDON_PREFIX_RE.search(prefix))
             nonplacement_price = bool(PRICE_NONPLACEMENT_PREFIX_RE.search(prefix))
             if amount is None or not currency or addon_price or nonplacement_price:
@@ -479,14 +525,21 @@ def extract_placement_terms(html: str) -> dict[str, Any]:
             if option in seen_price_options:
                 continue
             seen_price_options.add(option)
-            prices.append((amount, currency))
+            direct_context = bool(PRICE_DIRECT_CONTEXT_RE.search(local_context))
+            target = prices if direct_context else review_prices
+            target.append((amount, currency))
             price_evidence.append(
                 {
-                    "signal": "commercial:advertised_price",
-                    "snippet": segment[:500],
+                    "signal": (
+                        "commercial:advertised_price"
+                        if direct_context
+                        else "commercial:price_review"
+                    ),
+                    "snippet": local_context[:500],
                 }
             )
     currencies = sorted({currency for _, currency in prices})
+    review_currencies = sorted({currency for _, currency in review_prices})
     if prices:
         price_status = (
             "advertised_mixed_currency" if len(currencies) > 1 else "advertised"
@@ -495,6 +548,14 @@ def extract_placement_terms(html: str) -> dict[str, Any]:
         price_kind = (
             "placement_fee_mixed_currency" if len(currencies) > 1 else "placement_fee"
         )
+    elif review_prices:
+        price_status = (
+            "advertised_review_mixed_currency"
+            if len(review_currencies) > 1
+            else "advertised_review"
+        )
+        commercial_model = "paid"
+        price_kind = "placement_fee_unverified"
     elif free_signal and paid_signal:
         price_status = "conflicting"
         commercial_model = "mixed"
@@ -515,10 +576,16 @@ def extract_placement_terms(html: str) -> dict[str, Any]:
         price_status = "unknown"
         commercial_model = "unknown"
         price_kind = "unknown"
+    selected_currencies = currencies or review_currencies
     currency = (
-        currencies[0] if len(currencies) == 1 else "MIXED" if currencies else None
+        selected_currencies[0]
+        if len(selected_currencies) == 1
+        else "MIXED"
+        if selected_currencies
+        else None
     )
-    price_values = [amount for amount, _ in prices]
+    selected_prices = prices or review_prices
+    price_values = [amount for amount, _ in selected_prices]
 
     turnaround_days: list[int] = []
     for match in TURNAROUND_RE.finditer(text):

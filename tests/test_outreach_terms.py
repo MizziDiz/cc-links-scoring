@@ -46,6 +46,27 @@ class PlacementTermsTests(unittest.TestCase):
         self.assertIn("nofollow", result["link_attributes"])
         self.assertEqual(result["permanence"], "temporary")
 
+    def test_approval_or_selection_makes_future_publication_conditional(self) -> None:
+        for body in (
+            "Once approved, your article will be published with a byline.",
+            "If your content meets our requirements, we will publish your article.",
+            "Writers are notified when their article was chosen and will be published.",
+            "Una vez aprobado, el articulo sera publicado.",
+            "Apos a aprovacao, o artigo sera publicado.",
+        ):
+            with self.subTest(body=body):
+                result = extract_placement_terms(f"<p>{body}</p>")
+                self.assertEqual(result["promise_level"], "conditional_review")
+
+    def test_closed_submission_overrides_open_invitation(self) -> None:
+        result = extract_placement_terms(
+            "<h1>Write for us</h1><p>We are no longer accepting guest post "
+            "submissions.</p>"
+        )
+
+        self.assertEqual(result["promise_level"], "closed")
+        self.assertEqual(result["promise_probability"], 0.01)
+
     def test_broad_collaboration_does_not_imply_editorial_placement(self) -> None:
         result = extract_placement_terms(
             "<h1>Colabora con nosotros</h1><p>Buscamos voluntarios para eventos.</p>"
@@ -107,6 +128,23 @@ class PlacementTermsTests(unittest.TestCase):
 
         self.assertEqual(result["price_min"], 9.99)
         self.assertEqual(result["price_max"], 9.99)
+
+    def test_price_does_not_consume_following_word_count(self) -> None:
+        result = extract_placement_terms(
+            "<p>Guest post packages start at $170 800–1,200 words.</p>"
+        )
+
+        self.assertEqual(result["price_status"], "advertised")
+        self.assertEqual(result["price_min"], 170)
+        self.assertEqual(result["price_max"], 170)
+
+    def test_weak_price_context_requires_review(self) -> None:
+        result = extract_placement_terms(
+            "<p>Guest post topic: tell us how you sold a painting for $50,000.</p>"
+        )
+
+        self.assertEqual(result["price_status"], "advertised_review")
+        self.assertEqual(result["price_min"], 50_000)
 
     def test_mixed_currency_prices_are_not_silently_compared(self) -> None:
         result = extract_placement_terms(

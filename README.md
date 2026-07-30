@@ -258,6 +258,9 @@ The optional value pipeline keeps three different questions separate:
    Bounded evidence is retained for publication policy, guest/sponsored/link
    insertion type, advertised price, dofollow/nofollow policy, contextual or
    author-bio placement, permanence, turnaround and who writes the content.
+   Closed submissions are explicitly downgraded. A number found only in broad
+   placement context is marked `advertised_review` and is excluded from cost
+   calculations until reviewed; it is never silently treated as a fee.
 2. **How strong is the destination?** Provider exports are normalized into
    optional DR/DA/Authority Score, Trust Flow/Citation Flow, organic traffic,
    referring domains, spam and relevance fields. The project does not invent
@@ -311,6 +314,8 @@ not compared. Expected contact cost is `contact_cost / publication_probability`.
 Content cost is omitted only when the publisher explicitly promises to write
 the article. Expected effectiveness multiplies domain strength, promised
 publication probability, placement quality and current page qualification.
+The value export also carries `best_lastmod`, its provenance and the freshness
+components already calculated by the HTML/sitemap scoring stage.
 The output exposes every component and reason code instead of presenting the
 prediction as an observed SEO result.
 
