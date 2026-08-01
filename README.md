@@ -331,6 +331,58 @@ supports `url`, `registered_domain`, `status`, `quoted_cost`, `actual_cost`,
 the calibration source for replacing initial promise-based probabilities with
 empirical rates after enough outreach has actually been performed.
 
+### Placement model and outbound-link graph (offline)
+
+An optional second pass separates two materially different businesses:
+
+- `external_service`: the discovered domain brokers placements elsewhere. Its
+  own domain metrics may later support reliability/history, but are never used
+  as the quality of a promised placement. Explicit examples and publisher
+  inventory are linked to the service with evidence and confidence.
+- `self_hosted`: the discovered publisher places content or links on its own
+  registered domain. Existing page quality, freshness, promise and price can
+  therefore produce a partial offline evaluation immediately.
+- `hybrid` and `unknown` remain explicit review states.
+
+The pass reads only the exact WARC fragments already selected by discovery. It
+does not call an SEO API, submit forms or retain full HTML. It stores normalized
+outbound URLs, registered destination domains, anchor, `rel`, bounded context,
+DOM section, source lastmod, role and reason codes in a separate SQLite DB.
+
+```bash
+python pipeline.py outreach placements \
+  --db data/ops/outreach/outreach.db \
+  --terms-db data/ops/outreach/placement-terms.db \
+  --scores-db data/ops/outreach/outreach-scores-v2.db \
+  --out-db data/ops/outreach/placement-graph.db \
+  --fetch-source s3 \
+  --workers 24 \
+  --report data/ops/outreach/placement-graph-report.json \
+  --export-dir data/ops/outreach/placement-graph-exports
+```
+
+`placement_evaluations` deliberately leaves `service_reliability_score` null
+without domain metrics. External services are `pending_placement_metrics`;
+their own page score is not borrowed for third-party publishers. Self-hosted
+rows are labelled `offline_partial_*`, because Common Crawl page evidence is
+not a substitute for DR, traffic or flow.
+
+The graph also creates empty outcome tables. A deterministic manual observation
+sheet for every identified placement and 7/30/90/180-day window is generated
+without any API:
+
+```bash
+python pipeline.py outreach impact-template \
+  --db data/ops/outreach/placement-graph.db \
+  --out data/ops/outreach/impact-observations.csv
+```
+
+Future before/after measurements belong to the target project and placement,
+not to the service domain. `link_live`, indexation, rating, organic traffic,
+keywords and referring domains are kept as timestamped observations with an
+optional control label; the pipeline does not claim causality from a simple
+before/after difference.
+
 ## Adaptive discovery: baseline и feedback
 
 Воспроизводимый baseline перед изменением правил или порогов:

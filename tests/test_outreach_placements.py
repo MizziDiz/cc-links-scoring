@@ -1,0 +1,293 @@
+import csv
+import sqlite3
+import tempfile
+import unittest
+from pathlib import Path
+
+from cc_links.outreach_placements import (
+    PLACEMENT_SCHEMA,
+    _refresh_evaluations,
+    _refresh_services,
+    _save_page,
+    extract_placement_graph,
+    write_impact_template,
+)
+
+
+class PlacementGraphExtractionTests(unittest.TestCase):
+    def test_classifies_self_hosted_publisher(self) -> None:
+        result = extract_placement_graph(
+            """
+            <html><body><main>
+              <h1>Write for us</h1>
+              <p>We publish your article on our blog after editorial review.</p>
+              <a href="/stories/example">Recent article</a>
+            </main></body></html>
+            """,
+            page_url="https://example.co.uk/write-for-us",
+            registered_domain="example.co.uk",
+            terms={"promise_level": "conditional_review", "placement_types": "[]"},
+        )
+
+        self.assertEqual(result["placement_model"], "self_hosted")
+        self.assertGreaterEqual(result["model_confidence"], 0.7)
+        self.assertEqual(result["links"][0]["link_role"], "self_hosted")
+        self.assertEqual(
+            result["links"][0]["destination_registered_domain"], "example.co.uk"
+        )
+
+    def test_classifies_external_service_and_explicit_example(self) -> None:
+        result = extract_placement_graph(
+            """
+            <html><body><main>
+              <h1>Guest posting service</h1>
+              <p>We place your links on publisher sites in our network.</p>
+              <p>Recent placement example:
+                <a rel="nofollow" href="https://publisher.example/article?id=2#top">
+                  Published on Publisher
+                </a>
+              </p>
+            </main></body></html>
+            """,
+            page_url="https://agency.test/services",
+            registered_domain="agency.test",
+        )
+
+        self.assertEqual(result["placement_model"], "external_service")
+        example = result["links"][0]
+        self.assertEqual(example["link_role"], "placement_example")
+        self.assertEqual(example["rel"], "nofollow")
+        self.assertNotIn("#top", example["destination_url"])
+
+    def test_marks_service_with_both_models_as_hybrid(self) -> None:
+        result = extract_placement_graph(
+            """
+            <h1>Write for us</h1>
+            <p>We publish your article on our blog.</p>
+            <p>Our publisher network also places links across thousands of sites.</p>
+            """,
+            page_url="https://hybrid.test/write",
+            registered_domain="hybrid.test",
+            terms={
+                "promise_level": "open_submission",
+                "placement_types": ["guest_post"],
+            },
+        )
+
+        self.assertEqual(result["placement_model"], "hybrid")
+
+    def test_does_not_treat_arbitrary_external_reference_as_placement(self) -> None:
+        result = extract_placement_graph(
+            '<p>Read the <a href="https://docs.example/reference">documentation</a>.</p>',
+            page_url="https://service.test/info",
+            registered_domain="service.test",
+        )
+
+        self.assertEqual(result["placement_model"], "unknown")
+        self.assertEqual(result["links"][0]["link_role"], "reference")
+
+    def test_case_study_and_license_links_are_not_examples_without_service_context(
+        self,
+    ) -> None:
+        result = extract_placement_graph(
+            """
+            <h1>Write for us</h1>
+            <p><a href="/internal-case-study">Our product case study</a></p>
+            <p>Published under <a href="https://creativecommons.org/licenses/by/4.0/">
+              Creative Commons License example</a>.</p>
+            """,
+            page_url="https://publisher.com.in/write-for-us",
+            registered_domain="publisher.com.in",
+        )
+
+        roles = [link["link_role"] for link in result["links"]]
+        self.assertEqual(roles, ["self_hosted", "reference"])
+        self.assertEqual(
+            result["links"][0]["destination_registered_domain"], "publisher.com.in"
+        )
+
+
+class ImpactTemplateTests(unittest.TestCase):
+    def test_only_successful_pages_are_resume_checkpoints(self) -> None:
+        connection = sqlite3.connect(":memory:")
+        connection.executescript(PLACEMENT_SCHEMA)
+        connection.execute(
+            """INSERT INTO services VALUES (
+                'svc_1','example.test','https://example.test','unknown',0,'[]',
+                0,0,0,0,'pending_domain_metrics',NULL,'2026-01-01')"""
+        )
+        base = (
+            "https://example.test/ok",
+            "svc_1",
+            "example.test",
+            "CC-TEST",
+            None,
+            "ok",
+            "unknown",
+            0,
+            0,
+            0,
+            "[]",
+            "[]",
+            None,
+            None,
+            "[]",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        connection.execute(
+            "INSERT INTO service_pages VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            base,
+        )
+        failed = list(base)
+        failed[0] = "https://example.test/error"
+        failed[5] = "error"
+        connection.execute(
+            "INSERT INTO service_pages VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            failed,
+        )
+
+        completed = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT url FROM service_pages WHERE fetch_status='ok'"
+            )
+        }
+
+        self.assertEqual(completed, {"https://example.test/ok"})
+        connection.close()
+
+    def test_persists_page_links_placements_and_service_rollup(self) -> None:
+        connection = sqlite3.connect(":memory:")
+        connection.executescript(PLACEMENT_SCHEMA)
+        row = {
+            "url": "https://agency.test/service",
+            "registered_domain": "agency.test",
+            "crawl": "CC-TEST",
+            "fetch_time": "2026-01-01T00:00:00+00:00",
+            "terms": {
+                "promise_level": "guaranteed",
+                "promise_probability": 0.85,
+                "placement_types": '["guest_post"]',
+            },
+            "scores": {"combined_score": 77.0, "score_band": "high"},
+        }
+        result = {
+            "fetch_status": "ok",
+            "placement_model": "external_service",
+            "model_confidence": 0.9,
+            "external_score": 7.0,
+            "self_hosted_score": 0.0,
+            "model_reasons": ["external_service_language"],
+            "links": [
+                {
+                    "destination_url": "https://publisher.test/post",
+                    "destination_registered_domain": "publisher.test",
+                    "same_registered_domain": 0,
+                    "anchor_text": "Example placement",
+                    "rel": "nofollow",
+                    "context_text": "Recent example placement",
+                    "dom_section": "main",
+                    "link_role": "placement_example",
+                    "role_confidence": 0.9,
+                    "role_reasons": ["explicit_example_context"],
+                }
+            ],
+        }
+
+        _save_page(connection, row, result)
+        _refresh_services(connection)
+        _refresh_evaluations(connection)
+
+        self.assertEqual(
+            connection.execute("SELECT COUNT(*) FROM outbound_links").fetchone()[0], 1
+        )
+        self.assertEqual(
+            connection.execute("SELECT COUNT(*) FROM placements").fetchone()[0], 1
+        )
+        service = connection.execute(
+            "SELECT placement_model,example_placement_count,reliability_status FROM services"
+        ).fetchone()
+        self.assertEqual(service, ("external_service", 1, "pending_domain_metrics"))
+        evaluation = connection.execute(
+            "SELECT placement_quality_score,expected_utility_points,evaluation_status "
+            "FROM placement_evaluations"
+        ).fetchone()
+        self.assertEqual(evaluation, (None, None, "pending_placement_metrics"))
+        connection.close()
+
+    def test_self_hosted_offline_evaluation_uses_page_not_provider_metrics(
+        self,
+    ) -> None:
+        connection = sqlite3.connect(":memory:")
+        connection.executescript(PLACEMENT_SCHEMA)
+        row = {
+            "url": "https://publisher.test/write",
+            "registered_domain": "publisher.test",
+            "crawl": "CC-TEST",
+            "terms": {
+                "promise_level": "open_submission",
+                "promise_probability": 0.3,
+                "placement_types": '["guest_post"]',
+                "price_status": "free",
+            },
+            "scores": {"combined_score": 80.0, "score_band": "high"},
+        }
+        result = {
+            "fetch_status": "ok",
+            "placement_model": "self_hosted",
+            "model_confidence": 0.9,
+            "external_score": 0.0,
+            "self_hosted_score": 5.5,
+            "model_reasons": ["self_hosted_publication_language"],
+            "links": [],
+        }
+
+        _save_page(connection, row, result)
+        _refresh_services(connection)
+        _refresh_evaluations(connection)
+
+        evaluation = connection.execute(
+            "SELECT service_reliability_score,placement_quality_score,"
+            "expected_utility_points,cost_per_utility_point,evaluation_status "
+            "FROM placement_evaluations"
+        ).fetchone()
+        self.assertEqual(evaluation, (None, 80.0, 24.0, 0.0, "offline_partial_priced"))
+        connection.close()
+
+    def test_writes_four_observation_windows_per_placement(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            db_path = Path(directory) / "placements.db"
+            out_path = Path(directory) / "impact.csv"
+            connection = sqlite3.connect(db_path)
+            connection.executescript(PLACEMENT_SCHEMA)
+            connection.execute(
+                """INSERT INTO placements VALUES (
+                    'plc_1','svc_1','https://service.test/examples',
+                    'https://publisher.test/post','publisher.test',
+                    'placement_example',0.9,'[]','2026-01-01','2026-01-01')"""
+            )
+            connection.commit()
+            connection.close()
+
+            count = write_impact_template(db_path, out_path)
+
+            self.assertEqual(count, 4)
+            with out_path.open(encoding="utf-8", newline="") as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertEqual(
+                [int(row["window_days"]) for row in rows], [7, 30, 90, 180]
+            )
+
+
+if __name__ == "__main__":
+    unittest.main()

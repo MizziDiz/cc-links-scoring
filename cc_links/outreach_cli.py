@@ -22,6 +22,12 @@ from cc_links.outreach_live import (
     qualify_outreach,
     write_qualification_outputs,
 )
+from cc_links.outreach_placements import (
+    PlacementConfig,
+    build_placement_graph,
+    write_impact_template,
+    write_placement_outputs,
+)
 from cc_links.outreach_report import (
     build_pilot_report,
     evaluate_review_csv,
@@ -218,6 +224,39 @@ def add_outreach_parser(subparsers: Any) -> argparse.ArgumentParser:
     terms_report.add_argument("--db", required=True)
     terms_report.add_argument("--report", required=True)
     terms_report.add_argument("--export", help="Optional full terms CSV")
+
+    placements = commands.add_parser(
+        "placements",
+        help="Classify service models and extract archived outbound-link evidence",
+    )
+    placements.add_argument("--db", required=True, help="Read-only outreach DB")
+    placements.add_argument("--terms-db", required=True)
+    placements.add_argument("--scores-db", required=True)
+    placements.add_argument("--out-db", required=True, help="Separate graph DB")
+    placements.add_argument("--report", required=True)
+    placements.add_argument("--export-dir")
+    placements.add_argument("--workers", type=int, default=24)
+    placements.add_argument("--max-pages", type=int)
+    placements.add_argument("--max-html-bytes", type=int, default=5_000_000)
+    placements.add_argument("--max-links-per-page", type=int, default=20_000)
+    placements.add_argument("--retries", type=int, default=2)
+    placements.add_argument("--retry-backoff", type=float, default=1.0)
+    placements.add_argument("--fetch-source", choices=["s3", "https"], default="s3")
+
+    placements_report = commands.add_parser(
+        "placements-report",
+        help="Regenerate placement-graph JSON/CSV without fetching",
+    )
+    placements_report.add_argument("--db", required=True)
+    placements_report.add_argument("--report", required=True)
+    placements_report.add_argument("--export-dir")
+
+    impact_template = commands.add_parser(
+        "impact-template",
+        help="Export blank 7/30/90/180-day placement observation rows",
+    )
+    impact_template.add_argument("--db", required=True, help="Placement graph DB")
+    impact_template.add_argument("--out", required=True)
 
     metrics = commands.add_parser(
         "metrics",
@@ -439,6 +478,53 @@ def run_outreach_command(args: argparse.Namespace) -> None:
             "outreach terms report complete: %s",
             json.dumps(terms_report_payload, ensure_ascii=False, sort_keys=True),
         )
+        return
+    if command == "placements":
+        placement_config = PlacementConfig(
+            max_html_bytes=args.max_html_bytes,
+            max_links_per_page=args.max_links_per_page,
+            retries=args.retries,
+            retry_backoff=args.retry_backoff,
+        )
+        placement_summary = build_placement_graph(
+            source_db=args.db,
+            terms_db=args.terms_db,
+            scores_db=args.scores_db,
+            out_db=args.out_db,
+            workers=args.workers,
+            max_pages=args.max_pages,
+            fetch_source=args.fetch_source,
+            config=placement_config,
+            progress=LOGGER.info,
+        )
+        placement_report = write_placement_outputs(
+            args.out_db,
+            report_path=args.report,
+            export_dir=args.export_dir,
+        )
+        LOGGER.info(
+            "outreach placement graph complete: %s",
+            json.dumps(
+                {"run": asdict(placement_summary), "report": placement_report},
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        )
+        return
+    if command == "placements-report":
+        placement_report = write_placement_outputs(
+            args.db,
+            report_path=args.report,
+            export_dir=args.export_dir,
+        )
+        LOGGER.info(
+            "outreach placement report complete: %s",
+            json.dumps(placement_report, ensure_ascii=False, sort_keys=True),
+        )
+        return
+    if command == "impact-template":
+        rows = write_impact_template(args.db, args.out)
+        LOGGER.info("wrote %d impact-observation rows to %s", rows, args.out)
         return
     if command == "metrics":
         metrics_summary = import_domain_metrics(args.input, args.out_db)

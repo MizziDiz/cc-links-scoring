@@ -484,3 +484,33 @@ following are required:
 2. target topics or seed keywords for topical fit;
 3. preferred geographic priorities if they differ from the pilot TLDs;
 4. labelled pilot CSV confirming or correcting the pattern taxonomy.
+
+## 17. Placement graph and outcome calibration
+
+The discovered URL can represent either a publisher or an intermediary. These
+must not share one authority score:
+
+1. `external_service` brokers links on other domains. Provider-domain DR and
+   traffic describe reliability/history only. Exact example placements are
+   separate entities and receive destination/page metrics of their own.
+2. `self_hosted` publishes on the same registered domain. Page and domain
+   evidence can be applied directly to that opportunity.
+3. `hybrid` and `unknown` require explicit review or more evidence.
+
+Archived HTML is parsed into `services`, `service_pages`, `outbound_links`,
+`placements` and `placement_evaluations`. Association is accepted only from
+explicit example/inventory context; arbitrary external references remain
+`reference`. Every inferred model and relationship retains confidence and
+reason codes. Full HTML is discarded.
+
+Without external metrics, the evaluator is intentionally partial. A self-hosted
+page can combine existing page quality and publication probability. An external
+service remains `pending_placement_metrics`, and its own page score is not used
+as the quality of a third-party placement.
+
+Campaign learning uses `placement_outcomes` plus timestamped
+`impact_observations` at 7, 30, 90 and 180 days. The observation schema can hold
+link survival, indexation, target rating, organic traffic, keywords and
+referring domains, together with a control/cohort label. Before/after movement
+alone is descriptive; causal calibration requires controls and enough repeated
+placements.
