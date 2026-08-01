@@ -64,7 +64,7 @@ class PlacementGraphExtractionTests(unittest.TestCase):
             """
             <h1>Write for us</h1>
             <p>We publish your article on our blog.</p>
-            <p>We provide a guest posting service across thousands of sites.</p>
+            <p>We place your links across thousands of sites.</p>
             """,
             page_url="https://hybrid.test/write",
             registered_domain="hybrid.test",
@@ -122,6 +122,19 @@ class PlacementGraphExtractionTests(unittest.TestCase):
         self.assertEqual(result["placement_model"], "self_hosted")
         self.assertEqual(result["links"][0]["link_role"], "reference")
 
+    def test_guest_post_service_wording_is_not_external_network_proof(self) -> None:
+        result = extract_placement_graph(
+            """
+            <h1>Write for us</h1>
+            <p>Submit your article to us. We offer our guest posting service free.</p>
+            """,
+            page_url="https://publisher.test/write-for-us",
+            registered_domain="publisher.test",
+        )
+
+        self.assertEqual(result["placement_model"], "self_hosted")
+        self.assertIn("commercial_placement_language", result["model_reasons"])
+
     def test_generic_site_context_does_not_create_inventory_placement(self) -> None:
         result = extract_placement_graph(
             """
@@ -147,7 +160,7 @@ class PlacementGraphExtractionTests(unittest.TestCase):
 
         self.assertEqual(
             result["model_evidence"][0]["matched_expression"],
-            "We are a reputed link building service",
+            "We are a reputed link building service provider",
         )
 
     def test_does_not_treat_arbitrary_external_reference_as_placement(self) -> None:
