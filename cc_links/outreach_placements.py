@@ -26,7 +26,7 @@ except ImportError:  # pragma: no cover - production requirements include it
     tldextract = None  # type: ignore[assignment]
 
 SCHEMA_VERSION = 3
-EXTRACTOR_VERSION = 3
+EXTRACTOR_VERSION = 4
 PLACEMENT_MODELS = {"external_service", "self_hosted", "hybrid", "unknown"}
 LINK_ROLES = {
     "placement_example",
@@ -197,14 +197,20 @@ CREATE TABLE IF NOT EXISTS impact_observations (
 """
 
 EXTERNAL_SERVICE_RE = re.compile(
-    r"\b(?:link\s+building\s+(?:agency|service)|"
-    r"publisher\s+network|our\s+network\s+of\s+(?:sites|publishers|websites)|"
-    r"choose\s+from\s+(?:our\s+)?(?:sites|publishers|websites)|"
+    r"\b(?:we\s+(?:are|offer|provide|run|operate)\b.{0,100}\b"
+    r"(?:link\s+building|guest\s+post(?:ing)?|blogger\s+outreach)\s+"
+    r"(?:agency|service|services|platform|marketplace|provider|providers)|"
+    r"our\s+(?:link\s+building|guest\s+post(?:ing)?|blogger\s+outreach)\s+services?|"
+    r"(?:choose|find|browse|select)\s+publishers?\b.{0,100}\b"
+    r"our\s+(?:inventory|network|list|marketplace)|"
+    r"(?:publisher|website)\s+inventory|"
+    r"(?:buy|order)\s+(?:guest\s+posts?|backlinks?|link\s+placements?)|"
     r"placements?\s+(?:across|on)\s+(?:hundreds|thousands|multiple)\s+of\s+sites|"
     r"we\s+(?:secure|arrange|build|place)\s+(?:your\s+)?(?:links?|placements?)\s+on|"
     r"servicio\s+de\s+(?:guest\s+post|link\s+building|construccion\s+de\s+enlaces)|"
-    r"red\s+de\s+(?:sitios|editores)|rede\s+de\s+(?:sites|editores))\b",
-    re.IGNORECASE,
+    r"(?:elige|selecciona)\s+editores?\b.{0,100}\bnuestra\s+(?:red|lista)|"
+    r"(?:escolha|selecione)\s+editores?\b.{0,100}\bnossa\s+(?:rede|lista))\b",
+    re.IGNORECASE | re.DOTALL,
 )
 SELF_HOSTED_RE = re.compile(
     r"\b(?:we\s+(?:publish|feature)\s+(?:your\s+)?(?:article|post|content)\s+"

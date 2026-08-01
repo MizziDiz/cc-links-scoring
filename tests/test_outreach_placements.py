@@ -64,7 +64,7 @@ class PlacementGraphExtractionTests(unittest.TestCase):
             """
             <h1>Write for us</h1>
             <p>We publish your article on our blog.</p>
-            <p>Our publisher network also places links across thousands of sites.</p>
+            <p>We provide a guest posting service across thousands of sites.</p>
             """,
             page_url="https://hybrid.test/write",
             registered_domain="hybrid.test",
@@ -75,6 +75,36 @@ class PlacementGraphExtractionTests(unittest.TestCase):
         )
 
         self.assertEqual(result["placement_model"], "hybrid")
+
+    def test_requires_operational_external_service_language(self) -> None:
+        for body in (
+            "You confirm rights to publish images on our network of websites.",
+            "Keywords: paid guest post | link building service | niche edit.",
+            "Powered by SEO Link Building Service.",
+        ):
+            with self.subTest(body=body):
+                result = extract_placement_graph(
+                    f"<h1>Write for us</h1><p>{body}</p>",
+                    page_url="https://publisher.test/write",
+                    registered_domain="publisher.test",
+                )
+                self.assertEqual(result["placement_model"], "self_hosted")
+
+    def test_detects_publisher_inventory_workflow(self) -> None:
+        result = extract_placement_graph(
+            """
+            <h1>Guest posting marketplace</h1>
+            <p>Find Publisher: search for a proper site in our list using filters.</p>
+            <p>Choose a sample from our inventory:
+              <a href="https://publisher.test/example">Recent placement</a>
+            </p>
+            """,
+            page_url="https://broker.test/marketplace",
+            registered_domain="broker.test",
+        )
+
+        self.assertEqual(result["placement_model"], "external_service")
+        self.assertEqual(result["links"][0]["link_role"], "placement_example")
 
     def test_does_not_treat_arbitrary_external_reference_as_placement(self) -> None:
         result = extract_placement_graph(
