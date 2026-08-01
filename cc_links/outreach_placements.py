@@ -26,7 +26,7 @@ except ImportError:  # pragma: no cover - production requirements include it
     tldextract = None  # type: ignore[assignment]
 
 SCHEMA_VERSION = 3
-EXTRACTOR_VERSION = 4
+EXTRACTOR_VERSION = 5
 PLACEMENT_MODELS = {"external_service", "self_hosted", "hybrid", "unknown"}
 LINK_ROLES = {
     "placement_example",
@@ -204,13 +204,16 @@ EXTERNAL_SERVICE_RE = re.compile(
     r"(?:choose|find|browse|select)\s+publishers?\b.{0,100}\b"
     r"our\s+(?:inventory|network|list|marketplace)|"
     r"(?:publisher|website)\s+inventory|"
-    r"(?:buy|order)\s+(?:guest\s+posts?|backlinks?|link\s+placements?)|"
     r"placements?\s+(?:across|on)\s+(?:hundreds|thousands|multiple)\s+of\s+sites|"
     r"we\s+(?:secure|arrange|build|place)\s+(?:your\s+)?(?:links?|placements?)\s+on|"
     r"servicio\s+de\s+(?:guest\s+post|link\s+building|construccion\s+de\s+enlaces)|"
     r"(?:elige|selecciona)\s+editores?\b.{0,100}\bnuestra\s+(?:red|lista)|"
     r"(?:escolha|selecione)\s+editores?\b.{0,100}\bnossa\s+(?:rede|lista))\b",
     re.IGNORECASE | re.DOTALL,
+)
+COMMERCIAL_PLACEMENT_RE = re.compile(
+    r"\b(?:buy|order)\s+(?:guest\s+posts?|backlinks?|link\s+placements?)\b",
+    re.IGNORECASE,
 )
 SELF_HOSTED_RE = re.compile(
     r"\b(?:we\s+(?:publish|feature)\s+(?:your\s+)?(?:article|post|content)\s+"
@@ -229,9 +232,16 @@ EXAMPLE_RE = re.compile(
     r"ejemplos?|casos?\s+de\s+exito|portafolio|exemplos?|portfolio)\b",
     re.IGNORECASE,
 )
-INVENTORY_RE = re.compile(
-    r"\b(?:publishers?|sites?|websites?|inventory|catalog|marketplace|network|"
-    r"medios|sitios|editores|inventario|rede)\b",
+PLACEMENT_ASSOCIATION_RE = re.compile(
+    r"\b(?:recent\s+(?:placements?|guest\s+posts?|live\s+links?)|"
+    r"(?:placement|guest\s+post|live\s+link)\s+(?:example|sample)|"
+    r"published\s+(?:at|on|in)|placed\s+(?:at|on|in)|"
+    r"(?:choose|find|browse|select)\s+(?:a\s+)?(?:publisher|site|website)|"
+    r"(?:publisher|website|site)\s+(?:inventory|list|catalog)|"
+    r"our\s+(?:publisher|website|site)\s+(?:inventory|network|list)|"
+    r"(?:colocaciones?|publicaciones?)\s+recientes|"
+    r"(?:inventario|lista)\s+de\s+(?:editores|sitios)|"
+    r"(?:inventario|lista)\s+de\s+(?:editores|sites))\b",
     re.IGNORECASE,
 )
 CONTACT_RE = re.compile(
@@ -351,10 +361,12 @@ def _classify_link(
         return "social", 0.99, ["known_social_domain"]
     if same_domain:
         return "self_hosted", 0.90, ["same_registered_domain"]
-    if external_service_context and EXAMPLE_RE.search(combined):
+    if external_service_context and EXAMPLE_RE.search(combined) and (
+        PLACEMENT_ASSOCIATION_RE.search(combined)
+    ):
         reasons.append("explicit_example_context")
         return "placement_example", 0.90, reasons
-    if external_service_context and INVENTORY_RE.search(combined):
+    if external_service_context and PLACEMENT_ASSOCIATION_RE.search(combined):
         reasons.extend(["publisher_inventory_context", "external_service_context"])
         return "publisher_inventory", 0.80, reasons
     if CONTACT_RE.search(anchor) and len(anchor) <= 80:
@@ -376,8 +388,23 @@ def _model_from_evidence(
         evidence.append(
             {
                 "signal": "external_service_language",
+                "matched_expression": external_match.group(0),
                 "snippet": text[
                     max(0, external_match.start() - 120) : external_match.end() + 180
+                ],
+            }
+        )
+    commercial_match = COMMERCIAL_PLACEMENT_RE.search(text)
+    if commercial_match:
+        external_score += 2.0
+        reasons.append("commercial_placement_language")
+        evidence.append(
+            {
+                "signal": "commercial_placement_language",
+                "matched_expression": commercial_match.group(0),
+                "snippet": text[
+                    max(0, commercial_match.start() - 120) : commercial_match.end()
+                    + 180
                 ],
             }
         )
@@ -388,6 +415,7 @@ def _model_from_evidence(
         evidence.append(
             {
                 "signal": "self_hosted_publication_language",
+                "matched_expression": self_match.group(0),
                 "snippet": text[
                     max(0, self_match.start() - 120) : self_match.end() + 180
                 ],

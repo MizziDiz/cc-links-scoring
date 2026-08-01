@@ -106,6 +106,50 @@ class PlacementGraphExtractionTests(unittest.TestCase):
         self.assertEqual(result["placement_model"], "external_service")
         self.assertEqual(result["links"][0]["link_role"], "placement_example")
 
+    def test_buy_guest_post_on_write_for_us_is_not_external_network_proof(
+        self,
+    ) -> None:
+        result = extract_placement_graph(
+            """
+            <h1>Write for us</h1>
+            <p>Submit your article to us for editorial review.</p>
+            <aside><a href="https://seller.test/order">Buy guest posts</a></aside>
+            """,
+            page_url="https://publisher.test/write-for-us",
+            registered_domain="publisher.test",
+        )
+
+        self.assertEqual(result["placement_model"], "self_hosted")
+        self.assertEqual(result["links"][0]["link_role"], "reference")
+
+    def test_generic_site_context_does_not_create_inventory_placement(self) -> None:
+        result = extract_placement_graph(
+            """
+            <h1>Guest posting service</h1>
+            <p>We are a guest posting service provider.</p>
+            <div>This site uses an external
+              <a href="https://docs.test/reference">documentation example</a>.
+            </div>
+            """,
+            page_url="https://agency.test/service",
+            registered_domain="agency.test",
+        )
+
+        self.assertEqual(result["placement_model"], "external_service")
+        self.assertEqual(result["links"][0]["link_role"], "reference")
+
+    def test_evidence_records_exact_matched_expression(self) -> None:
+        result = extract_placement_graph(
+            "<p>We are a reputed link building service provider.</p>",
+            page_url="https://agency.test/service",
+            registered_domain="agency.test",
+        )
+
+        self.assertEqual(
+            result["model_evidence"][0]["matched_expression"],
+            "We are a reputed link building service",
+        )
+
     def test_does_not_treat_arbitrary_external_reference_as_placement(self) -> None:
         result = extract_placement_graph(
             '<p>Read the <a href="https://docs.example/reference">documentation</a>.</p>',
