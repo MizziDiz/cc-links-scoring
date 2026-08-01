@@ -376,6 +376,15 @@ CSV export includes it in `placement_requests.csv`. That file is the manual
 queue for requesting or finding examples; it does not claim that ordinary
 outbound links are placements.
 
+Fill `placement_url`, `verification_source` and `verified_at` only for examples
+you have actually verified, then import the same CSV offline:
+
+```bash
+python pipeline.py outreach placements-import \
+  --db data/ops/outreach/placement-graph.db \
+  --input data/ops/outreach/placement-graph-exports/placement_requests.csv
+```
+
 ```bash
 python pipeline.py outreach impact-template \
   --db data/ops/outreach/placement-graph.db \

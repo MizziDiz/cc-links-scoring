@@ -25,6 +25,7 @@ from cc_links.outreach_live import (
 from cc_links.outreach_placements import (
     PlacementConfig,
     build_placement_graph,
+    import_verified_placements,
     write_impact_template,
     write_placement_outputs,
 )
@@ -250,6 +251,13 @@ def add_outreach_parser(subparsers: Any) -> argparse.ArgumentParser:
     placements_report.add_argument("--db", required=True)
     placements_report.add_argument("--report", required=True)
     placements_report.add_argument("--export-dir")
+
+    placements_import = commands.add_parser(
+        "placements-import",
+        help="Import manually verified placement examples without HTTP/API calls",
+    )
+    placements_import.add_argument("--db", required=True)
+    placements_import.add_argument("--input", required=True)
 
     impact_template = commands.add_parser(
         "impact-template",
@@ -521,6 +529,10 @@ def run_outreach_command(args: argparse.Namespace) -> None:
             "outreach placement report complete: %s",
             json.dumps(placement_report, ensure_ascii=False, sort_keys=True),
         )
+        return
+    if command == "placements-import":
+        rows = import_verified_placements(args.db, args.input)
+        LOGGER.info("imported %d verified placement examples from %s", rows, args.input)
         return
     if command == "impact-template":
         rows = write_impact_template(args.db, args.out)

@@ -1119,7 +1119,11 @@ def write_placement_outputs(
                               placement_model,model_confidence,reliability_status,
                               example_placement_count,
                               'pending_example_request' AS request_status,
-                              '' AS requested_at,'' AS contact,'' AS notes
+                              '' AS requested_at,'' AS contact,
+                              '' AS placement_url,
+                              '' AS publisher_registered_domain,
+                              '' AS verification_source,
+                              '' AS verified_at,'' AS notes
                        FROM services
                        WHERE placement_model IN ('external_service','hybrid')
                          AND example_placement_count=0
@@ -1137,6 +1141,10 @@ def write_placement_outputs(
                 "request_status",
                 "requested_at",
                 "contact",
+                "placement_url",
+                "publisher_registered_domain",
+                "verification_source",
+                "verified_at",
                 "notes",
             ]
             with (target / "placement_requests.csv").open(
@@ -1148,6 +1156,75 @@ def write_placement_outputs(
         finally:
             connection.close()
     return report
+
+
+def import_verified_placements(out_db: str | Path, input_csv: str | Path) -> int:
+    """Import manually verified placement URLs without making network requests."""
+    with Path(input_csv).open(encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle)
+        required = {"service_id", "placement_url"}
+        if not reader.fieldnames or not required.issubset(reader.fieldnames):
+            raise ValueError("placement CSV requires service_id and placement_url")
+        rows = list(reader)
+    connection = sqlite3.connect(out_db)
+    connection.execute("PRAGMA foreign_keys=ON")
+    imported = 0
+    try:
+        with connection:
+            for row in rows:
+                raw_url = str(row.get("placement_url") or "").strip()
+                if not raw_url:
+                    continue
+                service_id = str(row.get("service_id") or "").strip()
+                service = connection.execute(
+                    "SELECT canonical_url FROM services WHERE service_id=?",
+                    (service_id,),
+                ).fetchone()
+                if service is None:
+                    raise ValueError(f"unknown service_id: {service_id}")
+                placement_url = _normalized_url(raw_url, raw_url)
+                if not placement_url:
+                    raise ValueError(f"invalid placement_url: {raw_url}")
+                publisher_domain = _registered_domain(placement_url)
+                supplied_domain = str(
+                    row.get("publisher_registered_domain") or ""
+                ).strip().lower()
+                if supplied_domain and supplied_domain != publisher_domain:
+                    raise ValueError(
+                        "publisher_registered_domain does not match placement_url: "
+                        f"{supplied_domain} != {publisher_domain}"
+                    )
+                confidence = float(row.get("association_confidence") or 1.0)
+                if not 0.0 <= confidence <= 1.0:
+                    raise ValueError("association_confidence must be between 0 and 1")
+                verified_at = str(row.get("verified_at") or "").strip() or _utc_now()
+                source = _compact(str(row.get("verification_source") or "manual"), 100)
+                reasons = ["manual_verified", f"verification_source:{source}"]
+                evidence_url = str(row.get("canonical_url") or "").strip() or str(
+                    service[0]
+                )
+                connection.execute(
+                    "INSERT OR REPLACE INTO placements VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        _stable_id("plc", service_id, placement_url),
+                        service_id,
+                        evidence_url,
+                        placement_url,
+                        publisher_domain,
+                        "verified_example",
+                        confidence,
+                        _json(reasons),
+                        verified_at,
+                        verified_at,
+                    ),
+                )
+                imported += 1
+        _refresh_services(connection)
+        _refresh_evaluations(connection)
+        connection.commit()
+    finally:
+        connection.close()
+    return imported
 
 
 def write_impact_template(out_db: str | Path, out_csv: str | Path) -> int:
