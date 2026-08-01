@@ -371,6 +371,11 @@ The graph also creates empty outcome tables. A deterministic manual observation
 sheet for every identified placement and 7/30/90/180-day window is generated
 without any API:
 
+When an external or hybrid service has no verified placement URL, the regular
+CSV export includes it in `placement_requests.csv`. That file is the manual
+queue for requesting or finding examples; it does not claim that ordinary
+outbound links are placements.
+
 ```bash
 python pipeline.py outreach impact-template \
   --db data/ops/outreach/placement-graph.db \

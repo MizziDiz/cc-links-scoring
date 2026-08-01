@@ -1113,6 +1113,38 @@ def write_placement_outputs(
                         writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
                         writer.writeheader()
                         writer.writerows(dict(row) for row in rows)
+            request_rows = list(
+                connection.execute(
+                    """SELECT service_id,registered_domain,canonical_url,
+                              placement_model,model_confidence,reliability_status,
+                              example_placement_count,
+                              'pending_example_request' AS request_status,
+                              '' AS requested_at,'' AS contact,'' AS notes
+                       FROM services
+                       WHERE placement_model IN ('external_service','hybrid')
+                         AND example_placement_count=0
+                       ORDER BY registered_domain"""
+                )
+            )
+            request_fields = [
+                "service_id",
+                "registered_domain",
+                "canonical_url",
+                "placement_model",
+                "model_confidence",
+                "reliability_status",
+                "example_placement_count",
+                "request_status",
+                "requested_at",
+                "contact",
+                "notes",
+            ]
+            with (target / "placement_requests.csv").open(
+                "w", encoding="utf-8", newline=""
+            ) as handle:
+                writer = csv.DictWriter(handle, fieldnames=request_fields)
+                writer.writeheader()
+                writer.writerows(dict(row) for row in request_rows)
         finally:
             connection.close()
     return report

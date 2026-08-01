@@ -11,6 +11,7 @@ from cc_links.outreach_placements import (
     _save_page,
     extract_placement_graph,
     write_impact_template,
+    write_placement_outputs,
 )
 
 
@@ -195,6 +196,33 @@ class PlacementGraphExtractionTests(unittest.TestCase):
 
 
 class ImpactTemplateTests(unittest.TestCase):
+    def test_exports_services_waiting_for_placement_examples(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            db_path = Path(directory) / "placements.db"
+            report_path = Path(directory) / "report.json"
+            export_dir = Path(directory) / "exports"
+            connection = sqlite3.connect(db_path)
+            connection.executescript(PLACEMENT_SCHEMA)
+            connection.execute(
+                """INSERT INTO services VALUES (
+                    'svc_1','broker.test','https://broker.test','external_service',
+                    0.9,'[]',1,0,0,0,'pending_domain_metrics',NULL,'2026-01-01')"""
+            )
+            connection.commit()
+            connection.close()
+
+            write_placement_outputs(
+                db_path, report_path=report_path, export_dir=export_dir
+            )
+
+            with (export_dir / "placement_requests.csv").open(
+                encoding="utf-8", newline=""
+            ) as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["registered_domain"], "broker.test")
+            self.assertEqual(rows[0]["request_status"], "pending_example_request")
+
     def test_only_successful_pages_are_resume_checkpoints(self) -> None:
         connection = sqlite3.connect(":memory:")
         connection.executescript(PLACEMENT_SCHEMA)
