@@ -266,6 +266,8 @@ class ImpactTemplateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             db_path = Path(directory) / "placements.db"
             input_path = Path(directory) / "model_review.csv"
+            report_path = Path(directory) / "report.json"
+            export_dir = Path(directory) / "exports"
             connection = sqlite3.connect(db_path)
             connection.executescript(PLACEMENT_SCHEMA)
             connection.execute(
@@ -329,6 +331,16 @@ class ImpactTemplateTests(unittest.TestCase):
                 ),
             )
             self.assertEqual(evaluation, ("self_hosted", "offline_partial_unpriced"))
+            report = write_placement_outputs(
+                db_path, report_path=report_path, export_dir=export_dir
+            )
+            with (export_dir / "service_model_reviews.csv").open(
+                encoding="utf-8", newline=""
+            ) as handle:
+                audit_rows = list(csv.DictReader(handle))
+            self.assertEqual(report["model_reviews"], 1)
+            self.assertEqual(len(audit_rows), 1)
+            self.assertEqual(audit_rows[0]["manual_model"], "self_hosted")
 
     def test_imports_verified_example_and_refreshes_service(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

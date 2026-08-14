@@ -1069,6 +1069,10 @@ def build_placement_report(out_db: str | Path) -> dict[str, Any]:
         distribution = lambda query: {
             str(row[0]): int(row[1]) for row in connection.execute(query)
         }
+        review_table_exists = connection.execute(
+            "SELECT 1 FROM sqlite_master "
+            "WHERE type='table' AND name='service_model_reviews'"
+        ).fetchone()
         return {
             "schema_version": SCHEMA_VERSION,
             "services": int(
@@ -1087,6 +1091,15 @@ def build_placement_report(out_db: str | Path) -> dict[str, Any]:
                 connection.execute(
                     "SELECT COUNT(*) FROM placement_evaluations"
                 ).fetchone()[0]
+            ),
+            "model_reviews": (
+                int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM service_model_reviews"
+                    ).fetchone()[0]
+                )
+                if review_table_exists
+                else 0
             ),
             "service_models": distribution(
                 "SELECT placement_model,COUNT(*) FROM services GROUP BY 1 ORDER BY 1"
@@ -1130,13 +1143,19 @@ def write_placement_outputs(
         connection = sqlite3.connect(f"file:{Path(out_db)}?mode=ro", uri=True)
         connection.row_factory = sqlite3.Row
         try:
-            for table, order_by in (
+            exports = [
                 ("services", "registered_domain"),
                 ("service_pages", "registered_domain,url"),
                 ("outbound_links", "service_id,source_url,destination_url"),
                 ("placements", "service_id,publisher_registered_domain,placement_url"),
                 ("placement_evaluations", "service_id,evidence_url"),
-            ):
+            ]
+            if connection.execute(
+                "SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='service_model_reviews'"
+            ).fetchone():
+                exports.append(("service_model_reviews", "service_id"))
+            for table, order_by in exports:
                 rows = list(
                     connection.execute(f"SELECT * FROM {table} ORDER BY {order_by}")
                 )

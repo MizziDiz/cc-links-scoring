@@ -392,6 +392,8 @@ and `notes` only after reviewing the archived evidence or a GET-only live page,
 then import the decisions offline. Accepted manual models are `self_hosted`,
 `external_service`, and `hybrid`; the decision and source-file digest are kept
 in `service_model_reviews` and take precedence over automatic page rollups.
+When present, the audit table is also exported as
+`service_model_reviews.csv` by `placements-report`.
 
 ```bash
 python pipeline.py outreach placements-model-import \
