@@ -385,6 +385,20 @@ python pipeline.py outreach placements-import \
   --input data/ops/outreach/placement-graph-exports/placement_requests.csv
 ```
 
+Unknown models are exported separately to `model_review.csv`, one highest-value
+evidence page per service. `review_priority_score` only orders manual work; it
+does not silently change `placement_model`. Fill `manual_model`, `reviewed_at`
+and `notes` only after reviewing the archived evidence or a GET-only live page,
+then import the decisions offline. Accepted manual models are `self_hosted`,
+`external_service`, and `hybrid`; the decision and source-file digest are kept
+in `service_model_reviews` and take precedence over automatic page rollups.
+
+```bash
+python pipeline.py outreach placements-model-import \
+  --db data/ops/outreach/placement-graph.db \
+  --input data/ops/outreach/placement-graph-exports/model_review.csv
+```
+
 ```bash
 python pipeline.py outreach impact-template \
   --db data/ops/outreach/placement-graph.db \

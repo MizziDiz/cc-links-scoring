@@ -160,6 +160,15 @@ CREATE INDEX IF NOT EXISTS idx_placement_evaluations_status
 CREATE INDEX IF NOT EXISTS idx_placement_evaluations_utility
     ON placement_evaluations(expected_utility_points);
 
+CREATE TABLE IF NOT EXISTS service_model_reviews (
+    service_id TEXT PRIMARY KEY,
+    manual_model TEXT NOT NULL,
+    reviewed_at TEXT NOT NULL,
+    notes TEXT,
+    source_digest TEXT NOT NULL,
+    FOREIGN KEY(service_id) REFERENCES services(service_id)
+);
+
 CREATE TABLE IF NOT EXISTS placement_outcomes (
     placement_id TEXT NOT NULL,
     project_id TEXT NOT NULL,
@@ -826,6 +835,19 @@ def _refresh_services(connection: sqlite3.Connection) -> None:
             "SELECT service_id FROM services ORDER BY service_id"
         )
     ]
+    review_table_exists = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='service_model_reviews'"
+    ).fetchone()
+    reviews = (
+        {
+            str(row[0]): str(row[1])
+            for row in connection.execute(
+                "SELECT service_id,manual_model FROM service_model_reviews"
+            )
+        }
+        if review_table_exists
+        else {}
+    )
     with connection:
         for service_id in service_ids:
             pages = list(
@@ -835,12 +857,20 @@ def _refresh_services(connection: sqlite3.Connection) -> None:
                 )
             )
             counts = Counter(str(row[1]) for row in pages if str(row[4]) == "ok")
-            if counts.get("hybrid") or (
-                counts.get("external_service") and counts.get("self_hosted")
+            known_counts = Counter(
+                {
+                    model_name: count
+                    for model_name, count in counts.items()
+                    if model_name != "unknown"
+                }
+            )
+            if known_counts.get("hybrid") or (
+                known_counts.get("external_service")
+                and known_counts.get("self_hosted")
             ):
                 model = "hybrid"
-            elif counts:
-                model = counts.most_common(1)[0][0]
+            elif known_counts:
+                model = known_counts.most_common(1)[0][0]
             else:
                 model = "unknown"
             relevant = [float(row[2]) for row in pages if str(row[1]) == model]
@@ -848,6 +878,10 @@ def _refresh_services(connection: sqlite3.Connection) -> None:
             reasons = sorted(
                 {reason for row in pages for reason in json.loads(str(row[3]) or "[]")}
             )
+            if service_id in reviews:
+                model = reviews[service_id]
+                confidence = 1.0
+                reasons = sorted({*reasons, "manual_model_review"})
             placement_stats = connection.execute(
                 "SELECT COUNT(*),COUNT(DISTINCT publisher_registered_domain) FROM placements WHERE service_id=?",
                 (service_id,),
@@ -1153,6 +1187,70 @@ def write_placement_outputs(
                 writer = csv.DictWriter(handle, fieldnames=request_fields)
                 writer.writeheader()
                 writer.writerows(dict(row) for row in request_rows)
+            review_source = list(
+                connection.execute(
+                    """WITH ranked AS (
+                           SELECT s.service_id,s.registered_domain,s.canonical_url,
+                                  s.model_confidence,s.model_reasons,p.url AS evidence_url,
+                                  p.promise_level,p.promise_probability,p.placement_types,
+                                  p.commercial_model,p.price_status,p.price_min,p.price_max,
+                                  p.currency,p.page_quality_score,p.score_band,p.best_lastmod,
+                                  p.model_evidence,
+                                  ROW_NUMBER() OVER (
+                                      PARTITION BY s.service_id
+                                      ORDER BY p.page_quality_score DESC,
+                                               p.promise_probability DESC,p.url
+                                  ) AS rn
+                           FROM services s JOIN service_pages p USING(service_id)
+                           WHERE s.placement_model='unknown'
+                       )
+                       SELECT * FROM ranked WHERE rn=1"""
+                )
+            )
+            review_rows: list[dict[str, Any]] = []
+            for row in review_source:
+                item = dict(row)
+                item.pop("rn", None)
+                quality = float(item.get("page_quality_score") or 0.0)
+                probability = float(item.get("promise_probability") or 0.0)
+                price_status = str(item.get("price_status") or "unknown")
+                priority = quality * 0.55 + probability * 25.0
+                if price_status != "unknown":
+                    priority += 10.0
+                if item.get("best_lastmod"):
+                    priority += 5.0
+                item["review_priority_score"] = round(min(100.0, priority), 3)
+                if str(item.get("promise_level")) == "closed":
+                    item["suggested_action"] = "check_closed_status"
+                elif probability >= 0.5:
+                    item["suggested_action"] = "confirm_self_hosted_terms"
+                else:
+                    item["suggested_action"] = "inspect_model_evidence"
+                item["manual_model"] = ""
+                item["reviewed_at"] = ""
+                item["notes"] = ""
+                review_rows.append(item)
+            review_rows.sort(
+                key=lambda item: (
+                    -float(item["review_priority_score"]),
+                    str(item["registered_domain"]),
+                )
+            )
+            review_fields = list(review_rows[0].keys()) if review_rows else [
+                "service_id",
+                "registered_domain",
+                "canonical_url",
+                "evidence_url",
+                "manual_model",
+                "reviewed_at",
+                "notes",
+            ]
+            with (target / "model_review.csv").open(
+                "w", encoding="utf-8", newline=""
+            ) as handle:
+                writer = csv.DictWriter(handle, fieldnames=review_fields)
+                writer.writeheader()
+                writer.writerows(review_rows)
         finally:
             connection.close()
     return report
@@ -1225,6 +1323,71 @@ def import_verified_placements(out_db: str | Path, input_csv: str | Path) -> int
     finally:
         connection.close()
     return imported
+
+
+def import_model_reviews(out_db: str | Path, input_csv: str | Path) -> int:
+    """Import explicit service-model decisions from the generated review CSV."""
+    source = Path(input_csv)
+    with source.open(encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle)
+        required = {"service_id", "manual_model"}
+        if not reader.fieldnames or not required.issubset(reader.fieldnames):
+            raise ValueError("model review CSV requires service_id and manual_model")
+        rows = list(reader)
+    decisions: list[tuple[str, str, str, str | None]] = []
+    seen: set[str] = set()
+    allowed = PLACEMENT_MODELS - {"unknown"}
+    for row in rows:
+        manual_model = str(row.get("manual_model") or "").strip()
+        if not manual_model:
+            continue
+        service_id = str(row.get("service_id") or "").strip()
+        if not service_id:
+            raise ValueError("reviewed row is missing service_id")
+        if service_id in seen:
+            raise ValueError(f"duplicate reviewed service_id: {service_id}")
+        if manual_model not in allowed:
+            raise ValueError(
+                f"invalid manual_model for {service_id}: {manual_model}; "
+                f"expected one of {sorted(allowed)}"
+            )
+        seen.add(service_id)
+        decisions.append(
+            (
+                service_id,
+                manual_model,
+                str(row.get("reviewed_at") or "").strip() or _utc_now(),
+                str(row.get("notes") or "").strip() or None,
+            )
+        )
+    if not decisions:
+        return 0
+    connection = sqlite3.connect(out_db)
+    connection.execute("PRAGMA foreign_keys=ON")
+    try:
+        connection.executescript(PLACEMENT_SCHEMA)
+        known_services = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT service_id FROM services"
+            )
+        }
+        missing = sorted(seen - known_services)
+        if missing:
+            raise ValueError(f"unknown service_id values: {missing}")
+        digest = _input_digest(source)
+        with connection:
+            connection.executemany(
+                """INSERT OR REPLACE INTO service_model_reviews
+                       (service_id,manual_model,reviewed_at,notes,source_digest)
+                   VALUES (?,?,?,?,?)""",
+                [(*decision, digest) for decision in decisions],
+            )
+        _refresh_services(connection)
+        _refresh_evaluations(connection)
+    finally:
+        connection.close()
+    return len(decisions)
 
 
 def write_impact_template(out_db: str | Path, out_csv: str | Path) -> int:

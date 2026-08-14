@@ -10,6 +10,7 @@ from cc_links.outreach_placements import (
     _refresh_services,
     _save_page,
     extract_placement_graph,
+    import_model_reviews,
     import_verified_placements,
     write_impact_template,
     write_placement_outputs,
@@ -218,6 +219,23 @@ class ImpactTemplateTests(unittest.TestCase):
                        'https://broker.test','svc_1','broker.test','CC-TEST','ok',
                        'external_service',0.9,5,0,'[]','[]')"""
             )
+            connection.execute(
+                """INSERT INTO services VALUES (
+                    'svc_2','unknown.test','https://unknown.test','unknown',
+                    0.35,'[]',1,1,0,0,'offline_page_evidence_only',NULL,'2026-01-01')"""
+            )
+            connection.execute(
+                """INSERT INTO service_pages (
+                       url,service_id,registered_domain,crawl,fetch_status,
+                       placement_model,model_confidence,external_score,
+                       self_hosted_score,model_reasons,model_evidence,
+                       promise_level,promise_probability,price_status,
+                       page_quality_score,score_band,best_lastmod
+                   ) VALUES (
+                       'https://unknown.test/write','svc_2','unknown.test','CC-TEST','ok',
+                       'unknown',0.35,0,1.5,'[]','[]','open_submission',0.5,
+                       'unknown',80,'high','2026-01-01')"""
+            )
             connection.commit()
             connection.close()
 
@@ -233,6 +251,84 @@ class ImpactTemplateTests(unittest.TestCase):
             self.assertEqual(rows[0]["registered_domain"], "broker.test")
             self.assertEqual(rows[0]["request_status"], "pending_example_request")
             self.assertEqual(rows[0]["placement_url"], "")
+            with (export_dir / "model_review.csv").open(
+                encoding="utf-8", newline=""
+            ) as handle:
+                review_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(review_rows), 1)
+            self.assertEqual(review_rows[0]["registered_domain"], "unknown.test")
+            self.assertEqual(
+                review_rows[0]["suggested_action"], "confirm_self_hosted_terms"
+            )
+            self.assertEqual(review_rows[0]["manual_model"], "")
+
+    def test_imports_manual_model_review_and_preserves_override(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            db_path = Path(directory) / "placements.db"
+            input_path = Path(directory) / "model_review.csv"
+            connection = sqlite3.connect(db_path)
+            connection.executescript(PLACEMENT_SCHEMA)
+            connection.execute(
+                """INSERT INTO services VALUES (
+                    'svc_1','publisher.test','https://publisher.test/write','unknown',
+                    0.35,'[]',1,1,0,0,'offline_page_evidence_only',NULL,'2026-01-01')"""
+            )
+            connection.execute(
+                """INSERT INTO service_pages (
+                       url,service_id,registered_domain,crawl,fetch_status,
+                       placement_model,model_confidence,external_score,
+                       self_hosted_score,model_reasons,model_evidence,
+                       promise_level,promise_probability,page_quality_score
+                   ) VALUES (
+                       'https://publisher.test/write','svc_1','publisher.test',
+                       'CC-TEST','ok','unknown',0.35,0,1.5,
+                       '["insufficient_model_evidence"]','[]',
+                       'conditional_review',0.5,80)"""
+            )
+            connection.commit()
+            connection.close()
+            with input_path.open("w", encoding="utf-8", newline="") as handle:
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=["service_id", "manual_model", "reviewed_at", "notes"],
+                )
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "service_id": "svc_1",
+                        "manual_model": "self_hosted",
+                        "reviewed_at": "2026-08-14T00:00:00Z",
+                        "notes": "archived evidence reviewed",
+                    }
+                )
+
+            imported = import_model_reviews(db_path, input_path)
+
+            connection = sqlite3.connect(db_path)
+            service = connection.execute(
+                "SELECT placement_model,model_confidence,model_reasons FROM services"
+            ).fetchone()
+            review = connection.execute(
+                "SELECT manual_model,reviewed_at,notes,length(source_digest) "
+                "FROM service_model_reviews"
+            ).fetchone()
+            evaluation = connection.execute(
+                "SELECT placement_model,evaluation_status FROM placement_evaluations"
+            ).fetchone()
+            connection.close()
+            self.assertEqual(imported, 1)
+            self.assertEqual(service[0:2], ("self_hosted", 1.0))
+            self.assertIn("manual_model_review", service[2])
+            self.assertEqual(
+                review,
+                (
+                    "self_hosted",
+                    "2026-08-14T00:00:00Z",
+                    "archived evidence reviewed",
+                    64,
+                ),
+            )
+            self.assertEqual(evaluation, ("self_hosted", "offline_partial_unpriced"))
 
     def test_imports_verified_example_and_refreshes_service(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -410,6 +506,45 @@ class ImpactTemplateTests(unittest.TestCase):
             "FROM placement_evaluations"
         ).fetchone()
         self.assertEqual(evaluation, (None, None, "pending_placement_metrics"))
+        connection.close()
+
+    def test_service_rollup_does_not_let_unknown_page_hide_known_model(self) -> None:
+        connection = sqlite3.connect(":memory:")
+        connection.executescript(PLACEMENT_SCHEMA)
+        connection.execute(
+            """INSERT INTO services VALUES (
+                'svc_1','publisher.test','https://publisher.test/a','unknown',
+                0.35,'[]',2,2,0,0,'offline_page_evidence_only',NULL,'2026-01-01')"""
+        )
+        page_values = [
+            (
+                "https://publisher.test/a",
+                "unknown",
+                0.35,
+                '["insufficient_model_evidence"]',
+            ),
+            (
+                "https://publisher.test/write-for-us",
+                "self_hosted",
+                0.83,
+                '["self_hosted_publication_language"]',
+            ),
+        ]
+        connection.executemany(
+            """INSERT INTO service_pages (
+                   url,service_id,registered_domain,crawl,fetch_status,
+                   placement_model,model_confidence,external_score,
+                   self_hosted_score,model_reasons,model_evidence
+               ) VALUES (?,'svc_1','publisher.test','CC-TEST','ok',?,?,0,0,?,'[]')""",
+            page_values,
+        )
+
+        _refresh_services(connection)
+
+        service = connection.execute(
+            "SELECT placement_model,model_confidence FROM services"
+        ).fetchone()
+        self.assertEqual(service, ("self_hosted", 0.83))
         connection.close()
 
     def test_self_hosted_offline_evaluation_uses_page_not_provider_metrics(

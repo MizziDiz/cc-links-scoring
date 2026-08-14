@@ -25,6 +25,7 @@ from cc_links.outreach_live import (
 from cc_links.outreach_placements import (
     PlacementConfig,
     build_placement_graph,
+    import_model_reviews,
     import_verified_placements,
     write_impact_template,
     write_placement_outputs,
@@ -258,6 +259,13 @@ def add_outreach_parser(subparsers: Any) -> argparse.ArgumentParser:
     )
     placements_import.add_argument("--db", required=True)
     placements_import.add_argument("--input", required=True)
+
+    model_import = commands.add_parser(
+        "placements-model-import",
+        help="Import reviewed service models from model_review.csv without network calls",
+    )
+    model_import.add_argument("--db", required=True)
+    model_import.add_argument("--input", required=True)
 
     impact_template = commands.add_parser(
         "impact-template",
@@ -533,6 +541,10 @@ def run_outreach_command(args: argparse.Namespace) -> None:
     if command == "placements-import":
         rows = import_verified_placements(args.db, args.input)
         LOGGER.info("imported %d verified placement examples from %s", rows, args.input)
+        return
+    if command == "placements-model-import":
+        rows = import_model_reviews(args.db, args.input)
+        LOGGER.info("imported %d reviewed service models from %s", rows, args.input)
         return
     if command == "impact-template":
         rows = write_impact_template(args.db, args.out)
