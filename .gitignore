@@ -1,5 +1,6 @@
 __pycache__/
 *.pyc
+.venv/
 
 # Local run artifacts
 *.db
@@ -10,6 +11,8 @@ __pycache__/
 latam_urls_*.txt
 quality_sample*.csv
 crawl_states/
+data/ops/
+.env
 
 # Real proxy credentials -- never commit
 proxies.txt

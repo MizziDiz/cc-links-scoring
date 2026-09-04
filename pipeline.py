@@ -31,8 +31,6 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, FIRST_COMPLETED, wait
 
 from tqdm import tqdm
-from bs4 import BeautifulSoup
-
 from cc_links.cdx import get_cdx_records
 from cc_links import fetch as fetch_mod
 from cc_links.fetch import fetch_warc_record, parse_html_record, extract_links_from_html, domain_of, make_soup
@@ -41,6 +39,7 @@ from cc_links.engines import classify_engine
 from cc_links.exclusions import load_excluded_domains, is_excluded
 from cc_links.countries import load_priorities, allocate_budget, country_name, load_category_map
 from cc_links.cc_index import discover_by_countries, load_candidates, load_candidates_shuffled, load_proxies
+from cc_links.outreach_cli import add_outreach_parser, run_outreach_command
 
 
 def process_page(conn, crawl, url, filename, offset, length, excluded, tld=None, country=None, delay=0.0):
@@ -156,7 +155,7 @@ def run_countries(countries, crawl, total_limit, per_country_limit, priorities_f
         # from S3 (no CloudFront per-IP throttle, no proxies). Requires an EC2 role
         # that can read S3. With --index-source auto, discovery uses S3 too.
         fetch_mod.enable_s3(pool_size=max(workers * 2, 64))
-        print(f"[source] fetching WARC records from s3://commoncrawl (signed, no rate limit)")
+        print("[source] fetching WARC records from s3://commoncrawl (signed, no rate limit)")
     elif proxy_file:
         n = fetch_mod.load_proxy_file(proxy_file)
         discovery_proxies = load_proxies(proxy_file)  # rotate index reads across IPs too
@@ -215,7 +214,7 @@ def run_countries(countries, crawl, total_limit, per_country_limit, priorities_f
         print(f"[discovery-only] {total} candidates in {candidates_file}:")
         for name, n in sorted(by_bucket.items(), key=lambda kv: -kv[1]):
             print(f"   {n:>7}  {name}")
-        print(f"[discovery-only] done -- rerun with --skip-discovery to fetch")
+        print("[discovery-only] done -- rerun with --skip-discovery to fetch")
         return
 
     conn = init_db(db_path)
@@ -385,6 +384,8 @@ def main():
                                    "by far the biggest cost: ~100+ link rows/page means ~50GB+ for 1.4M "
                                    "pages, vs a few hundred MB for pages alone")
 
+    add_outreach_parser(sub)
+
     args = parser.parse_args()
 
     # A single editable config file can supply any option; explicit CLI flags win.
@@ -411,6 +412,8 @@ def main():
                        args.max_per_domain, args.proxy, args.proxy_file, not args.no_links,
                        args.categories_file, args.per_category_limit, args.discovery_only,
                        args.discover_delay, args.source, args.index_source, args.shard)
+    elif args.mode == "outreach":
+        run_outreach_command(args)
 
 
 if __name__ == "__main__":
