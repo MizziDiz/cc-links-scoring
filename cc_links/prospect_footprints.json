@@ -1386,6 +1386,7 @@
       "platform": "Vanilla",
       "minimum_score": 50,
       "minimum_signal_types": 2,
+      "comment": "Pilot 2026-09-05: /discussion/ also matches Wix group pages (36/40 sampled); only Vanilla-specific HTML qualifies, never the bare word.",
       "discovery": [
         [
           "/discussion/",
@@ -1408,7 +1409,9 @@
         "html_contains": [
           "vanilla forums",
           "vanillaforums",
-          "id=\"vanilla"
+          "id=\"vanilla",
+          "class=\"vanilla",
+          "/vanilla/js/"
         ]
       }
     },
@@ -1618,10 +1621,6 @@
       "discovery": [
         [
           "member.php?u="
-        ],
-        [
-          "/members/",
-          ".html"
         ]
       ],
       "signals": {
@@ -1961,15 +1960,19 @@
       "platform": "Question2Answer",
       "minimum_score": 50,
       "minimum_signal_types": 2,
+      "comment": "Pilot 2026-09-05: bare /qa/ stored 6/32 (42% of the noise was WordPress); only Q2A route shapes drive discovery.",
       "discovery": [
         [
           "index.php?qa="
         ],
         [
-          "/qa/"
+          "?qa=questions"
         ],
         [
-          "?qa=questions"
+          "/qa/questions/"
+        ],
+        [
+          "/qa/ask"
         ]
       ],
       "signals": {
@@ -1978,10 +1981,13 @@
             "index.php?qa="
           ],
           [
-            "/qa/"
+            "?qa=questions"
           ],
           [
-            "?qa=questions"
+            "/qa/questions/"
+          ],
+          [
+            "/qa/ask"
           ]
         ],
         "html_contains": [
@@ -2172,21 +2178,14 @@
       "platform": "phpFox",
       "minimum_score": 50,
       "minimum_signal_types": 2,
+      "comment": "Pilot 2026-09-05: /profile-*.html stored 0/10 (product pages); only the phpFox route remains.",
       "discovery": [
-        [
-          "/profile-",
-          ".html"
-        ],
         [
           "index.php?do=/profile/"
         ]
       ],
       "signals": {
         "url_all": [
-          [
-            "/profile-",
-            ".html"
-          ],
           [
             "index.php?do=/profile/"
           ]
@@ -2202,25 +2201,14 @@
       "platform": "Oxwall",
       "minimum_score": 50,
       "minimum_signal_types": 2,
-      "comment": "Only the compound /forum/topic/ clause drives discovery; /user/ alone measured 0.6%.",
-      "discovery": [
-        [
-          "/user/",
-          "/"
-        ],
-        [
-          "/forum/topic/"
-        ]
-      ],
+      "comment": "Pilot 2026-09-05: /forum/topic/ found 611 URLs, Oxwall marker on 0/80 rejected pages and the bare 'ow_' substring matched unrelated HTML. HTML-only rule now.",
+      "discovery": [],
       "signals": {
-        "url_all": [
-          [
-            "/forum/topic/"
-          ]
-        ],
         "html_contains": [
           "oxwall",
-          "ow_"
+          "ow_page",
+          "ow_content",
+          "class=\"ow_"
         ]
       }
     }
