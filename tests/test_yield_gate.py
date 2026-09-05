@@ -66,6 +66,24 @@ class YieldProfileTests(unittest.TestCase):
         self.assertEqual(loaded["groups"].keys(), profile["groups"].keys())
         self.assertEqual(loaded["since"], "2000-01-01")
 
+    def test_since_is_ignored_when_processed_at_is_missing(self):
+        legacy = os.path.join(self.tmp.name, "legacy.db")
+        conn = sqlite3.connect(legacy)
+        conn.execute("""CREATE TABLE processed_urls (
+            normalized_url TEXT PRIMARY KEY, url TEXT, crawl TEXT, outcome TEXT,
+            score INTEGER, registered_domain TEXT, discovery_tier INTEGER,
+            pattern_id TEXT)""")
+        conn.executemany(
+            "INSERT INTO processed_urls VALUES (?, ?, 'c', ?, 60, ?, 0, 'guestbook:0')",
+            [(f"http://l{i}.test/", f"http://l{i}.test/",
+              "stored" if i < 2 else "unmatched", f"l{i}.test") for i in range(25)])
+        conn.commit()
+        conn.close()
+        profile = collect_pattern_yield(legacy, since="2026-07-25")
+        self.assertIsNone(profile["since"])
+        self.assertIn("processed_at", profile["note"])
+        self.assertEqual(profile["groups"][group_key("guestbook:0", 0)]["decisions"], 25)
+
     def test_database_is_opened_read_only(self):
         # A missing file must not be created by the profile query.
         missing = os.path.join(self.tmp.name, "absent.db")

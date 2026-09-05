@@ -89,6 +89,11 @@ class RunLoopTests(unittest.TestCase):
     def tearDown(self):
         self.fetch_patch.stop()
         self.init_patch.stop()
+        for conn in self.connections:
+            try:
+                conn.close()
+            except sqlite3.ProgrammingError:
+                pass  # already closed by run()
         self.tmp.cleanup()
 
     def test_commit_fires_on_unmatched_results(self):
@@ -104,6 +109,48 @@ class RunLoopTests(unittest.TestCase):
             "SELECT COUNT(*) FROM processed_urls WHERE outcome='unmatched'").fetchone()[0]
         conn.close()
         self.assertEqual(outcome_count, 10)
+
+    def test_manifest_with_null_tier_is_scheduled(self):
+        # Legacy manifests may carry an explicit null here; the loader used to
+        # abort on int(None) before any gate saw the record.
+        with open(self.manifest, "w", encoding="utf-8") as out:
+            out.write(json.dumps({
+                "url": "http://n.test/p", "url_host_tld": "test",
+                "url_host_registered_domain": "n.test", "bucket": "T",
+                "filename": "w.warc.gz", "offset": 0, "length": 10,
+                "fetch_status": 200, "discovery_tier": None,
+                "pattern_id": None, "prefetch_score": None,
+            }) + "\n")
+        prospect_pipeline.run(_args(self.db, self.manifest, pattern_min_yield=0.2))
+        conn = sqlite3.connect(self.db)
+        count = conn.execute("SELECT COUNT(*) FROM processed_urls").fetchone()[0]
+        conn.close()
+        self.assertEqual(count, 1)
+
+    def test_worker_exception_still_commits_applied_results(self):
+        rows = [(f"http://d{i}.test/p", "phpbb_forum:0", 0, f"d{i}.test")
+                for i in range(6)]
+        _manifest(self.manifest, rows)
+        calls = {"n": 0}
+
+        def flaky(record, footprints, minimum_score):
+            calls["n"] += 1
+            if calls["n"] == 6:
+                raise RuntimeError("worker blew up")
+            return _unmatched(record, footprints, minimum_score)
+
+        with mock.patch.object(prospect_pipeline, "fetch_and_classify", flaky):
+            with self.assertRaises(RuntimeError):
+                prospect_pipeline.run(_args(self.db, self.manifest, workers=1,
+                                            commit_every=1000))
+        conn = sqlite3.connect(self.db)
+        count = conn.execute("SELECT COUNT(*) FROM processed_urls").fetchone()[0]
+        conn.close()
+        # commit_every is never reached, so without the final commit on the
+        # error path nothing would be persisted. Completion order among the
+        # prefetched futures is not deterministic, only the lower bound is.
+        self.assertGreaterEqual(count, 1)
+        self.assertLess(count, 6)
 
     def test_yield_gate_keeps_low_yield_urls_out_of_the_queue(self):
         conn = init_db(self.db)

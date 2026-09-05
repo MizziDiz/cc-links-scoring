@@ -569,6 +569,13 @@ def load_candidates_shuffled(path: str, seed: int = 42):
             yield json.loads(line)
 
 
+def _int_or(value, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def load_candidates_prioritized(
         path: str, seed: int = 42, priority_profile=None):
     """Prioritize precise/high-score candidates, randomizing ties deterministically.
@@ -597,9 +604,11 @@ def load_candidates_prioritized(
                 record = json.loads(line)
             except (TypeError, ValueError, json.JSONDecodeError):
                 continue
-            tier = int(record.get("discovery_tier", 0))
-            score = int(record.get("prefetch_score", 0))
-            pattern_id = str(record.get("pattern_id", ""))
+            # Legacy manifests may carry an explicit null or "" here; treat
+            # both like the absent field instead of aborting the whole run.
+            tier = _int_or(record.get("discovery_tier"), 0)
+            score = _int_or(record.get("prefetch_score"), 0)
+            pattern_id = str(record.get("pattern_id") or "")
             if not pattern_id:
                 evidence = classify_discovery_url(
                     str(record.get("url", "")), include_broad=True

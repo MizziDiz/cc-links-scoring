@@ -286,15 +286,19 @@ def run(args):
     started_at = time.monotonic()
     last_report = started_at
 
-    with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        def fill():
-            for rec in iterator:
-                pending.add(pool.submit(fetch_and_classify, rec, args.footprints, args.min_score))
-                if len(pending) >= args.workers * 4:
-                    break
+    def fill(pool):
+        for rec in iterator:
+            pending.add(pool.submit(fetch_and_classify, rec, args.footprints, args.min_score))
+            if len(pending) >= args.workers * 4:
+                break
 
-        fill()
-        with tqdm(total=total) as progress:
+    # Whatever interrupts the loop (KeyboardInterrupt from systemd's SIGINT, an
+    # unexpected exception out of a worker), the results already applied to the
+    # connection are committed on the way out instead of being rolled back.
+    try:
+        with ThreadPoolExecutor(max_workers=args.workers) as pool, \
+                tqdm(total=total) as progress:
+            fill(pool)
             while pending:
                 done, pending = wait(pending, return_when=FIRST_COMPLETED)
                 for future in done:
@@ -359,7 +363,11 @@ def run(args):
                               f"rate={processed / elapsed:.1f}/s",
                               flush=True)
                         last_report = now
-                fill()
+                fill(pool)
+    except BaseException:
+        conn.commit()
+        conn.close()
+        raise
     conn.commit()
     final_capped = enforce_domain_cap(conn, args.max_per_domain)
     if final_capped:

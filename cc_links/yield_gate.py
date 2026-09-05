@@ -53,6 +53,13 @@ def collect_pattern_yield(db_path: str, since: Optional[str] = None,
         params: list[Any] = list(DECISION_OUTCOMES)
         where = "outcome IN (%s) AND pattern_id IS NOT NULL AND pattern_id <> ''" % (
             ", ".join("?" for _ in DECISION_OUTCOMES))
+        note = None
+        if since and "processed_at" not in columns:
+            # Databases created before the attribution columns have no
+            # timestamp; a hard failure here would stop every crawl, so fall
+            # back to the whole history and say so in the profile.
+            note = "processed_at column missing; 'since' ignored"
+            since = None
         if since:
             where += " AND processed_at >= ?"
             params.append(since)
@@ -77,7 +84,11 @@ def collect_pattern_yield(db_path: str, since: Optional[str] = None,
             "stored_domains": int(stored_domains or 0),
             "yield": (int(stored or 0) / int(decisions)) if decisions else 0.0,
         }
-    return {"groups": groups, "since": since, "minimum_decisions": minimum_decisions}
+    profile: dict[str, Any] = {
+        "groups": groups, "since": since, "minimum_decisions": minimum_decisions}
+    if note:
+        profile["note"] = note
+    return profile
 
 
 def save_yield_profile(profile: dict[str, Any], path: str) -> None:
