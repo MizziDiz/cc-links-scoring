@@ -164,6 +164,21 @@ python sample_html_markers.py --db prospects.db --state-dir crawl_states \
     --group guestbook:0 --per-group 200 --source s3 --markers data/marker-candidates.json
 ```
 
+Когда таксономия улучшилась, уже пройденные снимки не пересканируются:
+`multi_crawl.py --skip-crawls-in-db` берёт только снимки, по которым в базе
+ещё нет решений, а страницы, которые старая таксономия отвергла, перепроверяются
+из сохранённых манифестов по цене одного Range-запроса каждая:
+
+```
+python recheck_unmatched.py --db prospects.db --state-dir crawl_states \
+    --group guestbook:0 --until 2026-09-05 --limit 20000 --source s3 \
+    --log recheck.jsonl
+```
+
+Совпавшие страницы становятся кандидатами, отказ обновляет `processed_at`,
+лог хранит «до/после» по каждому URL. Не запускать одновременно со стадией
+загрузки сервиса: обе пишут в одну SQLite.
+
 Порядок работы с новым футпринтом: токен из `mine_footprints.py` →
 клауза discovery в правиле → `sample_html_markers.py` по найденным страницам →
 HTML-сигналы из того, что встречается на большинстве страниц → тест в

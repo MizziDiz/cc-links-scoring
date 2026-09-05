@@ -71,6 +71,25 @@ class MultiCrawlTests(unittest.TestCase):
             args, "CC-MAIN-2026-21", "/tmp/metrics.jsonl")
         self.assertIn("--discovery-metrics", command)
 
+    def test_crawls_already_processed_reads_db_read_only(self):
+        import os
+        from cc_links.db import init_db, mark_url_processed
+        from multi_crawl import crawls_already_processed
+        with tempfile.TemporaryDirectory() as tmp:
+            db = os.path.join(tmp, "p.db")
+            conn = init_db(db)
+            for i in range(5):
+                mark_url_processed(conn, f"http://a{i}.test/", f"http://a{i}.test/",
+                                   "CC-MAIN-2026-30", "unmatched")
+            mark_url_processed(conn, "http://b.test/", "http://b.test/",
+                               "CC-MAIN-2026-25", "stored", 80)
+            conn.commit()
+            conn.close()
+            self.assertEqual(crawls_already_processed(db, minimum_rows=5), {"CC-MAIN-2026-30"})
+            self.assertEqual(crawls_already_processed(db, minimum_rows=1),
+                             {"CC-MAIN-2026-30", "CC-MAIN-2026-25"})
+            self.assertEqual(crawls_already_processed(os.path.join(tmp, "absent.db")), set())
+
     def test_pre_fetch_gates_are_forwarded(self):
         args = argparse.Namespace(
             categories_file="categories.json", per_category_limit=5000,

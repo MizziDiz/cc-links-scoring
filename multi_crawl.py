@@ -38,6 +38,28 @@ def load_crawls(limit):
     return [item["id"] for item in data[:limit]]
 
 
+def crawls_already_processed(db_path, minimum_rows=1000):
+    """Crawl ids that already have decided URLs in the database.
+
+    Rescanning such a snapshot repeats a 300-part Parquet discovery (about
+    28 minutes on one vCPU) for the few URLs a taxonomy change adds; pages the
+    old taxonomy rejected are cheaper to re-check from the saved manifests
+    (recheck_unmatched.py). So the collector can skip them and take only
+    snapshots it has never decided anything for.
+    """
+    if not os.path.exists(db_path):
+        return set()
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        rows = conn.execute(
+            "SELECT crawl, COUNT(*) FROM processed_urls GROUP BY crawl").fetchall()
+    except sqlite3.OperationalError:
+        return set()
+    finally:
+        conn.close()
+    return {crawl for crawl, count in rows if crawl and count >= minimum_rows}
+
+
 def discovery_state_complete(candidates_file, expected_parts):
     """Return whether a resumable discovery checkpoint has finished its work."""
     state_path = candidates_file + ".state.json"
@@ -243,6 +265,12 @@ def run(args):
         print(f"[multi] auto discovery shards={args.discovery_shards} "
               f"for cpu_count={os.cpu_count() or 1}", flush=True)
     crawls = args.crawls or load_crawls(args.max_crawls)
+    if getattr(args, "skip_crawls_in_db", False):
+        done = crawls_already_processed(args.db, args.skip_crawls_min_rows)
+        skipped = [crawl for crawl in crawls if crawl in done]
+        crawls = [crawl for crawl in crawls if crawl not in done]
+        print(f"[multi] skipping {len(skipped)} crawl(s) already decided in the database: "
+              f"{skipped}", flush=True)
     print(f"[multi] target={args.target_total}, current={candidate_count(args.db)}, "
           f"crawls={crawls}", flush=True)
 
@@ -351,6 +379,11 @@ def main():
                         help="Do not fetch URLs of domains that already have a candidate")
     parser.add_argument("--per-run-domain-cap", type=int, default=0,
                         help="Schedule at most N URLs per domain within one crawl (0 = off)")
+    parser.add_argument("--skip-crawls-in-db", action="store_true",
+                        help="Skip snapshots that already have decided URLs in --db; "
+                             "re-check their rejected pages with recheck_unmatched.py instead")
+    parser.add_argument("--skip-crawls-min-rows", type=int, default=1000,
+                        help="How many decided URLs make a snapshot count as done")
     parser.add_argument("--per-category-limit", type=int, default=5000)
     parser.add_argument("--db", default="prospects.db")
     parser.add_argument("--min-score", type=int, default=50)
