@@ -132,6 +132,53 @@ class ProspectClassifierTests(unittest.TestCase):
             "<html></html>", "https://example.cn/forum.php?mod=viewthread&tid=7")
         self.assertEqual(discuz[0].platform, "Discuz")
 
+    def test_v3_rules_from_our_bases(self):
+        # Each case: URL, HTML, expected family, platform. Sources: GSA
+        # verified/success engines and prospects.db URL tokens (2026-09-05).
+        cases = [
+            ("https://bbs.example.cn/home.php?mod=space&uid=12", "", "profile_page", "Discuz"),
+            ("https://site.example.ru/index.php?subaction=userinfo&user=vasya", "", "profile_page", "DataLife Engine"),
+            ("https://moodle.example.tw/user/profile.php?id=4238", "<link href='/theme/image.php/x'>", "profile_page", "Moodle"),
+            ("https://x.example.jp/cgi-bin/yybbs/yybbs.cgi", "", "guestbook", "YY-BOARD"),
+            ("https://x.example.de/gaestebuch/", "<h1>Gästebuch</h1>", "guestbook", None),
+            ("https://x.example.fr/livre-d-or.html", "<h1>Livre d'or</h1>", "guestbook", None),
+            ("https://x.example.com/guestbook.php?subaction=getlist&page_no=1", "<a href='?subaction=addentry'>+</a>", "guestbook", None),
+            ("https://x.example.at/index.php?option=com_easybookreloaded", "", "guestbook", "Easybook Reloaded"),
+            ("https://forum.example.pl/forums/topic/2615-nasze-forum/", "<html class='ipsApp'>", "forum", "Invision Community"),
+            ("https://forum.example.de/thread/814-defekt/?postID=3088", "<div class='wcf-content'>", "forum", "WoltLab"),
+            ("https://x.example.pl/threads/what-is-this.123/", "<html data-xf-active='1'>", "forum", "XenForo"),
+            ("https://x.example.com/index.php?qa=questions", "<div class='qa-main'>", "article_submit", "Question2Answer"),
+            ("https://blog.example.com/2024/post/?replytocom=5",
+             "<meta name='generator' content='WordPress 6'><form id='commentform'>", "blog_comment", "WordPress"),
+            ("https://x.example.th/index.php?name=webboard&file=read&id=9", "", "forum", "WebBoard"),
+            ("https://x.example.kr/index.php?mid=board&document_srl=123", "", "forum", "XpressEngine"),
+        ]
+        for url, html, family, platform in cases:
+            with self.subTest(url=url):
+                matches = classify_prospect(html or "<html></html>", url)
+                self.assertTrue(matches, url)
+                self.assertEqual((matches[0].family, matches[0].platform), (family, platform))
+
+    def test_v3_structural_clauses_need_html(self):
+        # A bare structural URL must not be stored on the URL alone.
+        for url in ("https://forum.example.pl/forums/topic/2615-nasze-forum/",
+                    "https://x.example.pl/threads/what-is-this.123/",
+                    "https://x.example.com/qa/questions"):
+            with self.subTest(url=url):
+                self.assertEqual(classify_prospect("<html></html>", url), [])
+
+    def test_v3_removed_traps(self):
+        # RSS feeds and shop "compare/add_article" URLs no longer enter discovery.
+        for url in ("https://x.example.com/comments/feed/",
+                    "https://shop.example.de/compare/add_article/articleID/316",
+                    "https://x.example.com/2024/post/trackback/"):
+            with self.subTest(url=url):
+                self.assertEqual(classify_discovery_url(url), [])
+        # ... while the structural fallback still catches forums.
+        broad = classify_discovery_url("https://example.test/community/general/topic/7",
+                                       include_broad=True)
+        self.assertEqual(broad[0].tier, 1)
+
     def test_curated_engine_signatures(self):
         cases = [
             (

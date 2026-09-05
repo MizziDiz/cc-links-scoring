@@ -1,27 +1,32 @@
 {
-  "version": 2,
-  "comment": "Common Crawl prospect taxonomy derived from the local A-Parser footprint families. Broad search phrases require corroboration; URL, generator and structural HTML signals carry more weight.",
+  "version": 3,
+  "comment": "Common Crawl prospect taxonomy v3. Discovery clauses and HTML signals are curated from measured yield in prospects.db (25-30 July 2026 run) and from engine-specific URL tokens in our GSA verified/success bases. Broad terms with a measured yield under 15% were removed; the fetch-time yield gate (--pattern-min-yield) keeps guarding the rest.",
   "sources": [
     "MizziDiz/cc-links-scoring known-positive URL corpus",
     "MizziDiz/Aparser-checker keygen footprint families",
-    "Owner-provided GSA engine definitions (curated signatures only)"
+    "Owner-provided GSA engine definitions (curated signatures only)",
+    "prospects.db pattern yield and URL-token precision, 2026-09-05",
+    "gsabases.db engine-specific URL tokens (verified + success), 2026-09-05"
   ],
   "discovery": {
     "broad_terms": [
-      "/forum/", "/forums/", "/community/", "/board/", "/boards/",
-      "/thread/", "/threads/", "/topic/", "/topics/",
-      "viewtopic", "showthread", "viewthread", "forumdisplay",
-      "memberlist", "/members/", "/member/", "/users/", "/user/",
-      "/profile/", "profile.php", "member.php", "register.php",
-      "/comment/", "/comments/", "comment.php", "reply.php", "#respond",
-      "guestbook", "gbook.php", "signbook", "addentry",
-      "/wiki/", "index.php?title=", "special:", "special%3a",
-      "submit-article", "submit_article", "add-article", "add_article",
-      "submit-link", "submit-site", "add-url", "add-listing",
-      "/directory/", "displayimage.php", "addcomment",
-      "/trackback/", "wp-trackback.php", "mt-tb.cgi", "pingback",
-      "nv_redirect=", "/redirect", "goto=", "/go.php", "/proxy.php",
-      "/opener.php", "oadest", "bo_table=", "wr_id="
+      "/forum/",
+      "/forums/",
+      "/threads/",
+      "/community/",
+      "viewtopic",
+      "viewthread",
+      "forumdisplay",
+      "/wiki/",
+      "index.php?title=",
+      "special:",
+      "special%3a",
+      "/comment/",
+      "/directory/",
+      "/members/",
+      "submit-article",
+      "submit-link",
+      "pingback"
     ]
   },
   "defaults": {
@@ -34,18 +39,54 @@
       "family": "blog_comment",
       "platform": "WordPress",
       "signals": {
-        "generator_contains": ["wordpress"],
-        "url_contains": ["wp-comments-post.php", "/comments/feed/"],
-        "html_contains": ["wp-comments-post.php", "comment_post_id", "comment-form", "your email address will not be published", "notify me of follow-up comments"]
-      }
+        "generator_contains": [
+          "wordpress"
+        ],
+        "url_contains": [
+          "wp-comments-post.php",
+          "replytocom=",
+          "/comment-page-"
+        ],
+        "html_contains": [
+          "wp-comments-post.php",
+          "comment_post_id",
+          "comment-form",
+          "your email address will not be published",
+          "notify me of follow-up comments",
+          "comment-reply-link",
+          "commentform",
+          "wp-comments-post"
+        ]
+      },
+      "discovery": [
+        [
+          "wp-comments-post.php"
+        ],
+        [
+          "replytocom="
+        ],
+        [
+          "/comment-page-"
+        ]
+      ]
     },
     {
       "id": "generic_blog_comment",
       "family": "blog_comment",
       "platform": null,
       "signals": {
-        "url_contains": ["/comment/", "#respond"],
-        "html_contains": ["leave a comment", "post a comment", "comments rss", "name=\"comment\"", "name='comment'", "comment-form"]
+        "url_contains": [
+          "/comment/",
+          "#respond"
+        ],
+        "html_contains": [
+          "leave a comment",
+          "post a comment",
+          "comments rss",
+          "name=\"comment\"",
+          "name='comment'",
+          "comment-form"
+        ]
       }
     },
     {
@@ -55,9 +96,18 @@
       "minimum_score": 30,
       "minimum_signal_types": 1,
       "signals": {
-        "generator_contains": ["phpbb"],
-        "url_contains": ["viewtopic.php", "viewforum.php", "memberlist.php"],
-        "html_contains": ["powered by phpbb", "phpbb"]
+        "generator_contains": [
+          "phpbb"
+        ],
+        "url_contains": [
+          "viewtopic.php",
+          "viewforum.php",
+          "memberlist.php"
+        ],
+        "html_contains": [
+          "powered by phpbb",
+          "phpbb"
+        ]
       }
     },
     {
@@ -67,9 +117,18 @@
       "minimum_score": 30,
       "minimum_signal_types": 1,
       "signals": {
-        "generator_contains": ["vbulletin"],
-        "url_contains": ["showthread.php", "forumdisplay.php", "memberlist.php"],
-        "html_contains": ["powered by vbulletin", "vbulletin"]
+        "generator_contains": [
+          "vbulletin"
+        ],
+        "url_contains": [
+          "showthread.php",
+          "forumdisplay.php",
+          "memberlist.php"
+        ],
+        "html_contains": [
+          "powered by vbulletin",
+          "vbulletin"
+        ]
       }
     },
     {
@@ -79,9 +138,18 @@
       "minimum_score": 30,
       "minimum_signal_types": 1,
       "signals": {
-        "generator_contains": ["simple machines"],
-        "url_contains": ["index.php?action=register", "index.php?topic=", "index.php?board="],
-        "html_contains": ["powered by smf", "simple machines forum"]
+        "generator_contains": [
+          "simple machines"
+        ],
+        "url_contains": [
+          "index.php?action=register",
+          "index.php?topic=",
+          "index.php?board="
+        ],
+        "html_contains": [
+          "powered by smf",
+          "simple machines forum"
+        ]
       }
     },
     {
@@ -91,9 +159,17 @@
       "minimum_score": 30,
       "minimum_signal_types": 1,
       "signals": {
-        "generator_contains": ["mybb"],
-        "url_contains": ["showthread.php?tid=", "member.php?action=register"],
-        "html_contains": ["powered by mybb", "mybb"]
+        "generator_contains": [
+          "mybb"
+        ],
+        "url_contains": [
+          "showthread.php?tid=",
+          "member.php?action=register"
+        ],
+        "html_contains": [
+          "powered by mybb",
+          "mybb"
+        ]
       }
     },
     {
@@ -101,8 +177,18 @@
       "family": "forum",
       "platform": null,
       "signals": {
-        "url_contains": ["/forum/", "/forums/", "/threads/", "memberlist.php"],
-        "html_contains": ["forum", "register", "member list", "new topic"]
+        "url_contains": [
+          "/forum/",
+          "/forums/",
+          "/threads/",
+          "memberlist.php"
+        ],
+        "html_contains": [
+          "forum",
+          "register",
+          "member list",
+          "new topic"
+        ]
       }
     },
     {
@@ -110,17 +196,121 @@
       "family": "guestbook",
       "platform": null,
       "signals": {
-        "url_contains": ["guestbook", "gbook.php", "signbook.php", "addentry.php"],
-        "html_contains": ["sign my guestbook", "add to guestbook", "view guestbook", "guestbook entries", "powered by php guestbook"]
-      }
+        "url_contains": [
+          "guestbook",
+          "gbook.php",
+          "signbook.php",
+          "addentry.php",
+          "gaestebuch",
+          "gastenboek",
+          "livre-d-or",
+          "livredor",
+          "libro-de-visitas",
+          "gjestebok",
+          "guestbook.cgi",
+          "g_book.cgi"
+        ],
+        "html_contains": [
+          "sign my guestbook",
+          "add to guestbook",
+          "view guestbook",
+          "guestbook entries",
+          "powered by php guestbook",
+          "sign the guestbook",
+          "sign our guestbook",
+          "guestbook",
+          "guest book",
+          "gästebuch",
+          "gaestebuch",
+          "g&auml;stebuch",
+          "livre d'or",
+          "livre d&#039;or",
+          "libro de visitas",
+          "libro degli ospiti",
+          "livro de visitas",
+          "gastenboek",
+          "gjestebok",
+          "gästbok",
+          "vieraskirja",
+          "księga gości",
+          "kniha návštěv",
+          "гостевая книга",
+          "книга отзывов",
+          "留言板",
+          "留言本",
+          "ゲストブック",
+          "방명록",
+          "ziyaretçi defteri",
+          "entries_per_page",
+          "subaction=addentry",
+          "cm4all_com_widgets_guestbook"
+        ]
+      },
+      "discovery": [
+        [
+          "guestbook"
+        ],
+        [
+          "gbook.php"
+        ],
+        [
+          "signbook.php"
+        ],
+        [
+          "addentry.php"
+        ],
+        [
+          "/gaestebuch"
+        ],
+        [
+          "gastenboek"
+        ],
+        [
+          "livre-d-or"
+        ],
+        [
+          "livredor"
+        ],
+        [
+          "libro-de-visitas"
+        ],
+        [
+          "gjestebok"
+        ],
+        [
+          "guestbook.cgi"
+        ],
+        [
+          "g_book.cgi"
+        ],
+        [
+          "subaction=getlist"
+        ],
+        [
+          "module=guestbook"
+        ],
+        [
+          "cm4all_com_widgets_guestbook"
+        ]
+      ]
     },
     {
       "id": "article_submission",
       "family": "article_submit",
       "platform": null,
       "signals": {
-        "url_contains": ["submit-article", "submit_article", "add-article", "add_article"],
-        "html_contains": ["powered by article dashboard", "submit article", "add article", "article directory", "powered by seo-board"]
+        "url_contains": [
+          "submit-article",
+          "submit_article",
+          "add-article"
+        ],
+        "html_contains": [
+          "powered by article dashboard",
+          "submit article",
+          "add article",
+          "article directory",
+          "powered by seo-board"
+        ]
       }
     },
     {
@@ -130,9 +320,19 @@
       "minimum_score": 30,
       "minimum_signal_types": 1,
       "signals": {
-        "generator_contains": ["mediawiki"],
-        "url_contains": ["special:createaccount", "special:userlogin", "index.php?title=special:"],
-        "html_contains": ["powered by mediawiki", "this page was last edited", "mw-content-text"]
+        "generator_contains": [
+          "mediawiki"
+        ],
+        "url_contains": [
+          "special:createaccount",
+          "special:userlogin",
+          "index.php?title=special:"
+        ],
+        "html_contains": [
+          "powered by mediawiki",
+          "this page was last edited",
+          "mw-content-text"
+        ]
       }
     },
     {
@@ -142,9 +342,19 @@
       "minimum_score": 30,
       "minimum_signal_types": 1,
       "signals": {
-        "generator_contains": ["pligg"],
-        "url_contains": ["submit.php", "/upcoming/"],
-        "html_contains": ["powered by pligg", "submit a new story", "upcoming news", "published news"]
+        "generator_contains": [
+          "pligg"
+        ],
+        "url_contains": [
+          "submit.php",
+          "/upcoming/"
+        ],
+        "html_contains": [
+          "powered by pligg",
+          "submit a new story",
+          "upcoming news",
+          "published news"
+        ]
       }
     },
     {
@@ -152,8 +362,18 @@
       "family": "directory",
       "platform": "PHP Link Directory",
       "signals": {
-        "url_contains": ["add-url.php", "submit-link", "submit.php"],
-        "html_contains": ["powered by phpld", "powered by php link directory", "submit your site", "add your site", "add a link"]
+        "url_contains": [
+          "add-url.php",
+          "submit-link",
+          "submit.php"
+        ],
+        "html_contains": [
+          "powered by phpld",
+          "powered by php link directory",
+          "submit your site",
+          "add your site",
+          "add a link"
+        ]
       }
     },
     {
@@ -161,8 +381,17 @@
       "family": "directory",
       "platform": null,
       "signals": {
-        "url_contains": ["/directory/", "/submit-site", "/add-listing"],
-        "html_contains": ["link directory", "business directory", "submit your link", "submit your site"]
+        "url_contains": [
+          "/directory/",
+          "/submit-site",
+          "/add-listing"
+        ],
+        "html_contains": [
+          "link directory",
+          "business directory",
+          "submit your link",
+          "submit your site"
+        ]
       }
     },
     {
@@ -172,8 +401,14 @@
       "minimum_score": 30,
       "minimum_signal_types": 1,
       "signals": {
-        "url_contains": ["displayimage.php", "addcomment"],
-        "html_contains": ["powered by coppermine photo gallery", "coppermine photo gallery"]
+        "url_contains": [
+          "displayimage.php",
+          "addcomment"
+        ],
+        "html_contains": [
+          "powered by coppermine photo gallery",
+          "coppermine photo gallery"
+        ]
       }
     },
     {
@@ -182,10 +417,23 @@
       "platform": "NukeViet",
       "minimum_score": 50,
       "minimum_signal_types": 1,
-      "discovery": [["nv_redirect=", "nv="]],
+      "discovery": [
+        [
+          "nv_redirect=",
+          "nv="
+        ]
+      ],
       "signals": {
-        "url_all": [["nv_redirect=", "nv="]],
-        "html_contains": ["nukeviet", "nv3-content"]
+        "url_all": [
+          [
+            "nv_redirect=",
+            "nv="
+          ]
+        ],
+        "html_contains": [
+          "nukeviet",
+          "nv3-content"
+        ]
       }
     },
     {
@@ -195,17 +443,38 @@
       "minimum_score": 50,
       "minimum_signal_types": 1,
       "discovery": [
-        ["/bitrix/redirect.php", "goto="],
-        ["/bitrix/rk.php", "goto="],
-        ["/bitrix/click.php", "goto="]
+        [
+          "/bitrix/redirect.php",
+          "goto="
+        ],
+        [
+          "/bitrix/rk.php",
+          "goto="
+        ],
+        [
+          "/bitrix/click.php",
+          "goto="
+        ]
       ],
       "signals": {
         "url_all": [
-          ["/bitrix/redirect.php", "goto="],
-          ["/bitrix/rk.php", "goto="],
-          ["/bitrix/click.php", "goto="]
+          [
+            "/bitrix/redirect.php",
+            "goto="
+          ],
+          [
+            "/bitrix/rk.php",
+            "goto="
+          ],
+          [
+            "/bitrix/click.php",
+            "goto="
+          ]
         ],
-        "html_contains": ["1c-bitrix", "bx-core"]
+        "html_contains": [
+          "1c-bitrix",
+          "bx-core"
+        ]
       }
     },
     {
@@ -215,13 +484,29 @@
       "minimum_score": 50,
       "minimum_signal_types": 1,
       "discovery": [
-        ["google.", "/url?", "q="],
-        ["google.", "/url?", "url="]
+        [
+          "google.",
+          "/url?",
+          "q="
+        ],
+        [
+          "google.",
+          "/url?",
+          "url="
+        ]
       ],
       "signals": {
         "url_all": [
-          ["google.", "/url?", "q="],
-          ["google.", "/url?", "url="]
+          [
+            "google.",
+            "/url?",
+            "q="
+          ],
+          [
+            "google.",
+            "/url?",
+            "url="
+          ]
         ]
       }
     },
@@ -232,25 +517,71 @@
       "minimum_score": 50,
       "minimum_signal_types": 1,
       "discovery": [
-        ["/redirect.php", "url="],
-        ["/redirect.asp", "url="],
-        ["/redirect?", "url="],
-        ["/go.php", "url="],
-        ["/go?http"],
-        ["/proxy.php", "link="],
-        ["/opener.php", "url="],
-        ["/www/delivery/ck.php", "oadest"]
+        [
+          "/redirect.php",
+          "url="
+        ],
+        [
+          "/redirect.asp",
+          "url="
+        ],
+        [
+          "/redirect?",
+          "url="
+        ],
+        [
+          "/go.php",
+          "url="
+        ],
+        [
+          "/go?http"
+        ],
+        [
+          "/proxy.php",
+          "link="
+        ],
+        [
+          "/opener.php",
+          "url="
+        ],
+        [
+          "/www/delivery/ck.php",
+          "oadest"
+        ]
       ],
       "signals": {
         "url_all": [
-          ["/redirect.php", "url="],
-          ["/redirect.asp", "url="],
-          ["/redirect?", "url="],
-          ["/go.php", "url="],
-          ["/go?http"],
-          ["/proxy.php", "link="],
-          ["/opener.php", "url="],
-          ["/www/delivery/ck.php", "oadest"]
+          [
+            "/redirect.php",
+            "url="
+          ],
+          [
+            "/redirect.asp",
+            "url="
+          ],
+          [
+            "/redirect?",
+            "url="
+          ],
+          [
+            "/go.php",
+            "url="
+          ],
+          [
+            "/go?http"
+          ],
+          [
+            "/proxy.php",
+            "link="
+          ],
+          [
+            "/opener.php",
+            "url="
+          ],
+          [
+            "/www/delivery/ck.php",
+            "oadest"
+          ]
         ]
       }
     },
@@ -261,20 +592,65 @@
       "minimum_score": 50,
       "minimum_signal_types": 1,
       "discovery": [
-        ["index.php?title=user:"], ["index.php?title=user%3a"],
-        ["index.php?title=usuario:"], ["index.php?title=usuario%3a"],
-        ["index.php?title=utilisateur:"], ["index.php?title=utilisateur%3a"],
-        ["index.php?title=benutzer:"], ["index.php?title=benutzer%3a"]
+        [
+          "index.php?title=user:"
+        ],
+        [
+          "index.php?title=user%3a"
+        ],
+        [
+          "index.php?title=usuario:"
+        ],
+        [
+          "index.php?title=usuario%3a"
+        ],
+        [
+          "index.php?title=utilisateur:"
+        ],
+        [
+          "index.php?title=utilisateur%3a"
+        ],
+        [
+          "index.php?title=benutzer:"
+        ],
+        [
+          "index.php?title=benutzer%3a"
+        ]
       ],
       "signals": {
         "url_all": [
-          ["index.php?title=user:"], ["index.php?title=user%3a"],
-          ["index.php?title=usuario:"], ["index.php?title=usuario%3a"],
-          ["index.php?title=utilisateur:"], ["index.php?title=utilisateur%3a"],
-          ["index.php?title=benutzer:"], ["index.php?title=benutzer%3a"]
+          [
+            "index.php?title=user:"
+          ],
+          [
+            "index.php?title=user%3a"
+          ],
+          [
+            "index.php?title=usuario:"
+          ],
+          [
+            "index.php?title=usuario%3a"
+          ],
+          [
+            "index.php?title=utilisateur:"
+          ],
+          [
+            "index.php?title=utilisateur%3a"
+          ],
+          [
+            "index.php?title=benutzer:"
+          ],
+          [
+            "index.php?title=benutzer%3a"
+          ]
         ],
-        "generator_contains": ["mediawiki"],
-        "html_contains": ["mw-content-text", "mw-userpage"]
+        "generator_contains": [
+          "mediawiki"
+        ],
+        "html_contains": [
+          "mw-content-text",
+          "mw-userpage"
+        ]
       }
     },
     {
@@ -283,10 +659,19 @@
       "platform": "bbPress",
       "minimum_score": 50,
       "minimum_signal_types": 1,
-      "discovery": [["/forums/users/"]],
+      "discovery": [
+        [
+          "/forums/users/"
+        ]
+      ],
       "signals": {
-        "url_contains": ["/forums/users/"],
-        "html_contains": ["bbpress", "bbp-user-page"]
+        "url_contains": [
+          "/forums/users/"
+        ],
+        "html_contains": [
+          "bbpress",
+          "bbp-user-page"
+        ]
       }
     },
     {
@@ -296,18 +681,37 @@
       "minimum_score": 50,
       "minimum_signal_types": 1,
       "discovery": [
-        ["forum.php?mod=viewthread"],
-        ["viewthread.php?tid="],
-        ["/thread-", ".html"]
+        [
+          "forum.php?mod=viewthread"
+        ],
+        [
+          "viewthread.php?tid="
+        ],
+        [
+          "/thread-",
+          ".html"
+        ]
       ],
       "signals": {
         "url_all": [
-          ["forum.php?mod=viewthread"],
-          ["viewthread.php?tid="],
-          ["/thread-", ".html"]
+          [
+            "forum.php?mod=viewthread"
+          ],
+          [
+            "viewthread.php?tid="
+          ],
+          [
+            "/thread-",
+            ".html"
+          ]
         ],
-        "generator_contains": ["discuz"],
-        "html_contains": ["powered by discuz", "discuz!"]
+        "generator_contains": [
+          "discuz"
+        ],
+        "html_contains": [
+          "powered by discuz",
+          "discuz!"
+        ]
       }
     },
     {
@@ -316,10 +720,25 @@
       "platform": null,
       "minimum_score": 50,
       "minimum_signal_types": 1,
-      "discovery": [["/bbs/board.php", "bo_table=", "wr_id="]],
+      "discovery": [
+        [
+          "/bbs/board.php",
+          "bo_table=",
+          "wr_id="
+        ]
+      ],
       "signals": {
-        "url_all": [["/bbs/board.php", "bo_table=", "wr_id="]],
-        "html_contains": ["bo_table", "wr_id"]
+        "url_all": [
+          [
+            "/bbs/board.php",
+            "bo_table=",
+            "wr_id="
+          ]
+        ],
+        "html_contains": [
+          "bo_table",
+          "wr_id"
+        ]
       }
     },
     {
@@ -329,15 +748,27 @@
       "minimum_score": 50,
       "minimum_signal_types": 1,
       "discovery": [
-        ["doku.php", "do="],
-        ["/wiki/dokuwiki"]
+        [
+          "doku.php",
+          "do="
+        ],
+        [
+          "/wiki/dokuwiki"
+        ]
       ],
       "signals": {
         "url_all": [
-          ["doku.php", "do="],
-          ["/wiki/dokuwiki"]
+          [
+            "doku.php",
+            "do="
+          ],
+          [
+            "/wiki/dokuwiki"
+          ]
         ],
-        "generator_contains": ["dokuwiki"],
+        "generator_contains": [
+          "dokuwiki"
+        ],
         "html_contains": [
           "content=\"dokuwiki",
           "<div class=\"dokuwiki",
@@ -354,10 +785,18 @@
       "minimum_score": 50,
       "minimum_signal_types": 1,
       "discovery": [
-        ["tiki-index.php"],
-        ["tiki-editpage.php"],
-        ["tiki-register.php"],
-        ["tiki-view_forum.php"]
+        [
+          "tiki-index.php"
+        ],
+        [
+          "tiki-editpage.php"
+        ],
+        [
+          "tiki-register.php"
+        ],
+        [
+          "tiki-view_forum.php"
+        ]
       ],
       "signals": {
         "url_contains": [
@@ -366,7 +805,10 @@
           "tiki-register.php",
           "tiki-view_forum.php"
         ],
-        "generator_contains": ["tikiwiki", "tiki wiki"],
+        "generator_contains": [
+          "tikiwiki",
+          "tiki wiki"
+        ],
         "html_contains": [
           "tikiwiki cms/groupware",
           "tiki wiki cms groupware",
@@ -382,13 +824,23 @@
       "minimum_score": 50,
       "minimum_signal_types": 1,
       "discovery": [
-        ["/community/", "foro="],
-        ["/community/account/"]
+        [
+          "/community/",
+          "foro="
+        ],
+        [
+          "/community/account/"
+        ]
       ],
       "signals": {
         "url_all": [
-          ["/community/", "foro="],
-          ["/community/account/"]
+          [
+            "/community/",
+            "foro="
+          ],
+          [
+            "/community/account/"
+          ]
         ],
         "html_contains": [
           "id='wpforo-",
@@ -405,8 +857,12 @@
       "minimum_score": 50,
       "minimum_signal_types": 1,
       "discovery": [
-        ["option=com_jcomments"],
-        ["/components/com_jcomments/"]
+        [
+          "option=com_jcomments"
+        ],
+        [
+          "/components/com_jcomments/"
+        ]
       ],
       "signals": {
         "url_contains": [
@@ -427,7 +883,9 @@
       "minimum_score": 50,
       "minimum_signal_types": 1,
       "signals": {
-        "url_contains": ["guestbook.php"],
+        "url_contains": [
+          "guestbook.php"
+        ],
         "html_contains": [
           "powered by advanced guestbook",
           "agcode is on",
@@ -442,7 +900,9 @@
       "minimum_score": 50,
       "minimum_signal_types": 1,
       "signals": {
-        "html_contains": ["powered by akobook"]
+        "html_contains": [
+          "powered by akobook"
+        ]
       }
     },
     {
@@ -451,9 +911,15 @@
       "platform": "DedeCMS",
       "minimum_score": 50,
       "minimum_signal_types": 1,
-      "discovery": [["/plus/guestbook/"]],
+      "discovery": [
+        [
+          "/plus/guestbook/"
+        ]
+      ],
       "signals": {
-        "url_contains": ["/plus/guestbook/"],
+        "url_contains": [
+          "/plus/guestbook/"
+        ],
         "html_contains": [
           "powered by dedeeims",
           "power by dedecms",
@@ -483,8 +949,13 @@
       "minimum_score": 50,
       "minimum_signal_types": 1,
       "signals": {
-        "generator_contains": ["piwigo"],
-        "html_contains": ["powered by piwigo", "add a comment"]
+        "generator_contains": [
+          "piwigo"
+        ],
+        "html_contains": [
+          "powered by piwigo",
+          "add a comment"
+        ]
       }
     },
     {
@@ -492,8 +963,1138 @@
       "family": "trackback",
       "platform": null,
       "signals": {
-        "url_contains": ["/trackback/", "wp-trackback.php", "mt-tb.cgi"],
-        "html_contains": ["trackback url for this entry", "trackback url", "send trackback", "trackback ping"]
+        "html_contains": [
+          "trackback url for this entry",
+          "trackback url",
+          "send trackback",
+          "trackback ping"
+        ]
+      },
+      "minimum_signal_types": 1,
+      "minimum_score": 60,
+      "comment": "Trackbacks are not placements (our GSA success bases: 40 rows in 2026 vs 52k in the 2023 dump) and the URL terms yielded 2-4%; kept for HTML-only classification, no longer drives discovery."
+    },
+    {
+      "id": "easybook_guestbook",
+      "family": "guestbook",
+      "platform": "Easybook Reloaded",
+      "minimum_score": 50,
+      "minimum_signal_types": 1,
+      "discovery": [
+        [
+          "option=com_easybookreloaded"
+        ],
+        [
+          "/component/easybookreloaded"
+        ]
+      ],
+      "signals": {
+        "url_all": [
+          [
+            "option=com_easybookreloaded"
+          ],
+          [
+            "/component/easybookreloaded"
+          ]
+        ],
+        "html_contains": [
+          "easybookreloaded",
+          "easybook",
+          "com_easybookreloaded"
+        ]
+      }
+    },
+    {
+      "id": "phoca_guestbook",
+      "family": "guestbook",
+      "platform": "Phoca Guestbook",
+      "minimum_score": 50,
+      "minimum_signal_types": 1,
+      "discovery": [
+        [
+          "option=com_phocaguestbook"
+        ],
+        [
+          "/component/phocaguestbook"
+        ]
+      ],
+      "signals": {
+        "url_all": [
+          [
+            "option=com_phocaguestbook"
+          ],
+          [
+            "/component/phocaguestbook"
+          ]
+        ],
+        "html_contains": [
+          "phocaguestbook",
+          "com_phocaguestbook"
+        ]
+      }
+    },
+    {
+      "id": "kide_shoutbox",
+      "family": "guestbook",
+      "platform": "Kide Shoutbox",
+      "minimum_score": 50,
+      "minimum_signal_types": 1,
+      "discovery": [
+        [
+          "option=com_kide"
+        ],
+        [
+          "/component/kide"
+        ]
+      ],
+      "signals": {
+        "url_all": [
+          [
+            "option=com_kide"
+          ],
+          [
+            "/component/kide"
+          ]
+        ],
+        "html_contains": [
+          "kide shoutbox",
+          "com_kide",
+          "kideshoutbox"
+        ]
+      }
+    },
+    {
+      "id": "cgi_bbs_jp",
+      "family": "guestbook",
+      "platform": "YY-BOARD",
+      "minimum_score": 50,
+      "minimum_signal_types": 1,
+      "comment": "Japanese CGI boards (KENT-WEB family); GSA YYBoard 573 verified hosts.",
+      "discovery": [
+        [
+          "yybbs.cgi"
+        ],
+        [
+          "aska.cgi"
+        ],
+        [
+          "g_book.cgi"
+        ],
+        [
+          "joyful.cgi"
+        ]
+      ],
+      "signals": {
+        "url_contains": [
+          "yybbs.cgi",
+          "aska.cgi",
+          "g_book.cgi",
+          "joyful.cgi"
+        ],
+        "html_contains": [
+          "yybbs",
+          "aska.cgi",
+          "g_book",
+          "joyful",
+          "kent web",
+          "kentweb",
+          "掲示板",
+          "書き込み"
+        ]
+      }
+    },
+    {
+      "id": "xenforo_forum",
+      "family": "forum",
+      "platform": "XenForo",
+      "minimum_score": 50,
+      "minimum_signal_types": 2,
+      "discovery": [
+        [
+          "index.php?threads/"
+        ],
+        [
+          "/threads/",
+          "."
+        ],
+        [
+          "index.php?members/"
+        ]
+      ],
+      "signals": {
+        "url_all": [
+          [
+            "index.php?threads/"
+          ],
+          [
+            "/threads/",
+            "."
+          ],
+          [
+            "index.php?members/"
+          ]
+        ],
+        "html_contains": [
+          "xenforo",
+          "data-xf-",
+          "xf-",
+          "class=\"p-body"
+        ]
+      }
+    },
+    {
+      "id": "invision_forum",
+      "family": "forum",
+      "platform": "Invision Community",
+      "minimum_score": 50,
+      "minimum_signal_types": 2,
+      "comment": "Bare /topic/ measured 1.8% yield (shop and news URLs); only IPS-shaped routes drive discovery.",
+      "discovery": [
+        [
+          "/forums/topic/",
+          "-"
+        ],
+        [
+          "/topic/",
+          "-",
+          "?do="
+        ],
+        [
+          "index.php?/topic/"
+        ]
+      ],
+      "signals": {
+        "url_all": [
+          [
+            "/forums/topic/",
+            "-"
+          ],
+          [
+            "/topic/",
+            "-",
+            "?do="
+          ],
+          [
+            "index.php?/topic/"
+          ]
+        ],
+        "html_contains": [
+          "ipstype",
+          "ipsapp",
+          "invision community",
+          "invision power",
+          "ips_"
+        ]
+      }
+    },
+    {
+      "id": "woltlab_forum",
+      "family": "forum",
+      "platform": "WoltLab",
+      "minimum_score": 50,
+      "minimum_signal_types": 2,
+      "comment": "Bare /thread/ measured 0.4% yield (sewing-thread shops); only WoltLab-shaped routes drive discovery.",
+      "discovery": [
+        [
+          "/thread/",
+          "-",
+          "postid="
+        ],
+        [
+          "/wbb/",
+          "/thread/"
+        ],
+        [
+          "/forum/thread/",
+          "-"
+        ]
+      ],
+      "signals": {
+        "url_all": [
+          [
+            "/thread/",
+            "-",
+            "postid="
+          ],
+          [
+            "/wbb/",
+            "/thread/"
+          ],
+          [
+            "/forum/thread/",
+            "-"
+          ]
+        ],
+        "html_contains": [
+          "woltlab",
+          "wbb",
+          "wcf-"
+        ]
+      }
+    },
+    {
+      "id": "kunena_forum",
+      "family": "forum",
+      "platform": "Kunena",
+      "minimum_score": 50,
+      "minimum_signal_types": 1,
+      "discovery": [
+        [
+          "option=com_kunena"
+        ],
+        [
+          "/component/kunena/"
+        ],
+        [
+          "/kunena/"
+        ]
+      ],
+      "signals": {
+        "url_all": [
+          [
+            "option=com_kunena"
+          ],
+          [
+            "/component/kunena/"
+          ],
+          [
+            "/kunena/"
+          ]
+        ],
+        "html_contains": [
+          "kunena"
+        ]
+      }
+    },
+    {
+      "id": "punbb_forum",
+      "family": "forum",
+      "platform": "PunBB/FluxBB",
+      "minimum_score": 50,
+      "minimum_signal_types": 1,
+      "discovery": [
+        [
+          "viewtopic.php?id="
+        ],
+        [
+          "viewforum.php?id="
+        ],
+        [
+          "/fluxbb/"
+        ],
+        [
+          "/punbb/"
+        ]
+      ],
+      "signals": {
+        "url_all": [
+          [
+            "viewtopic.php?id="
+          ],
+          [
+            "viewforum.php?id="
+          ],
+          [
+            "/fluxbb/"
+          ],
+          [
+            "/punbb/"
+          ]
+        ],
+        "html_contains": [
+          "punbb",
+          "fluxbb"
+        ]
+      }
+    },
+    {
+      "id": "vanilla_forum",
+      "family": "forum",
+      "platform": "Vanilla",
+      "minimum_score": 50,
+      "minimum_signal_types": 2,
+      "discovery": [
+        [
+          "/discussion/",
+          "-"
+        ],
+        [
+          "/discussions/"
+        ]
+      ],
+      "signals": {
+        "url_all": [
+          [
+            "/discussion/",
+            "-"
+          ],
+          [
+            "/discussions/"
+          ]
+        ],
+        "html_contains": [
+          "vanilla forums",
+          "vanillaforums",
+          "id=\"vanilla"
+        ]
+      }
+    },
+    {
+      "id": "nodebb_forum",
+      "family": "forum",
+      "platform": "NodeBB",
+      "minimum_score": 50,
+      "minimum_signal_types": 2,
+      "comment": "No URL shape distinguishes NodeBB (/topic/123/slug); HTML-only rule, classifies pages found by broad terms.",
+      "discovery": [],
+      "signals": {
+        "html_contains": [
+          "nodebb"
+        ]
+      }
+    },
+    {
+      "id": "flarum_forum",
+      "family": "forum",
+      "platform": "Flarum",
+      "minimum_score": 50,
+      "minimum_signal_types": 2,
+      "comment": "No URL shape distinguishes Flarum (/d/123-slug); HTML-only rule.",
+      "discovery": [],
+      "signals": {
+        "html_contains": [
+          "flarum"
+        ]
+      }
+    },
+    {
+      "id": "webboard_thai",
+      "family": "forum",
+      "platform": "WebBoard",
+      "minimum_score": 50,
+      "minimum_signal_types": 1,
+      "discovery": [
+        [
+          "name=webboard",
+          "file=read"
+        ]
+      ],
+      "signals": {
+        "url_all": [
+          [
+            "name=webboard",
+            "file=read"
+          ]
+        ],
+        "html_contains": [
+          "webboard",
+          "กระทู้",
+          "ตอบกระทู้"
+        ]
+      }
+    },
+    {
+      "id": "phpbb_profile",
+      "family": "profile_page",
+      "platform": "phpBB",
+      "minimum_score": 50,
+      "minimum_signal_types": 1,
+      "discovery": [
+        [
+          "memberlist.php?mode=viewprofile"
+        ]
+      ],
+      "signals": {
+        "url_all": [
+          [
+            "memberlist.php?mode=viewprofile"
+          ]
+        ],
+        "html_contains": [
+          "phpbb",
+          "powered by phpbb"
+        ]
+      }
+    },
+    {
+      "id": "discuz_profile",
+      "family": "profile_page",
+      "platform": "Discuz",
+      "minimum_score": 50,
+      "minimum_signal_types": 1,
+      "discovery": [
+        [
+          "home.php?mod=space"
+        ],
+        [
+          "space-uid-"
+        ]
+      ],
+      "signals": {
+        "url_all": [
+          [
+            "home.php?mod=space"
+          ],
+          [
+            "space-uid-"
+          ]
+        ],
+        "generator_contains": [
+          "discuz"
+        ],
+        "html_contains": [
+          "discuz",
+          "powered by discuz"
+        ]
+      }
+    },
+    {
+      "id": "datalife_profile",
+      "family": "profile_page",
+      "platform": "DataLife Engine",
+      "minimum_score": 50,
+      "minimum_signal_types": 1,
+      "discovery": [
+        [
+          "subaction=userinfo"
+        ]
+      ],
+      "signals": {
+        "url_all": [
+          [
+            "subaction=userinfo"
+          ]
+        ],
+        "generator_contains": [
+          "datalife"
+        ],
+        "html_contains": [
+          "datalife engine",
+          "dle_root",
+          "dle-",
+          "dle_"
+        ]
+      }
+    },
+    {
+      "id": "moodle_profile",
+      "family": "profile_page",
+      "platform": "Moodle",
+      "minimum_score": 50,
+      "minimum_signal_types": 1,
+      "discovery": [
+        [
+          "/user/profile.php?id="
+        ],
+        [
+          "/user/view.php?id="
+        ]
+      ],
+      "signals": {
+        "url_all": [
+          [
+            "/user/profile.php?id="
+          ],
+          [
+            "/user/view.php?id="
+          ]
+        ],
+        "generator_contains": [
+          "moodle"
+        ],
+        "html_contains": [
+          "moodle",
+          "theme/image.php",
+          "yui_"
+        ]
+      }
+    },
+    {
+      "id": "osclass_profile",
+      "family": "profile_page",
+      "platform": "OSclass",
+      "minimum_score": 50,
+      "minimum_signal_types": 1,
+      "discovery": [
+        [
+          "page=user",
+          "action=pub_profile"
+        ]
+      ],
+      "signals": {
+        "url_all": [
+          [
+            "page=user",
+            "action=pub_profile"
+          ]
+        ],
+        "generator_contains": [
+          "osclass"
+        ],
+        "html_contains": [
+          "osclass"
+        ]
+      }
+    },
+    {
+      "id": "vbulletin_profile",
+      "family": "profile_page",
+      "platform": "vBulletin",
+      "minimum_score": 50,
+      "minimum_signal_types": 1,
+      "discovery": [
+        [
+          "member.php?u="
+        ],
+        [
+          "/members/",
+          ".html"
+        ]
+      ],
+      "signals": {
+        "url_all": [
+          [
+            "member.php?u="
+          ]
+        ],
+        "generator_contains": [
+          "vbulletin"
+        ],
+        "html_contains": [
+          "vbulletin",
+          "powered by vbulletin"
+        ]
+      }
+    },
+    {
+      "id": "mybb_profile",
+      "family": "profile_page",
+      "platform": "MyBB",
+      "minimum_score": 50,
+      "minimum_signal_types": 1,
+      "discovery": [
+        [
+          "member.php?action=profile"
+        ]
+      ],
+      "signals": {
+        "url_all": [
+          [
+            "member.php?action=profile"
+          ]
+        ],
+        "generator_contains": [
+          "mybb"
+        ],
+        "html_contains": [
+          "mybb",
+          "powered by mybb"
+        ]
+      }
+    },
+    {
+      "id": "smf_profile",
+      "family": "profile_page",
+      "platform": "SMF",
+      "minimum_score": 50,
+      "minimum_signal_types": 1,
+      "discovery": [
+        [
+          "action=profile;u="
+        ],
+        [
+          "action=profile&u="
+        ]
+      ],
+      "signals": {
+        "url_all": [
+          [
+            "action=profile;u="
+          ],
+          [
+            "action=profile&u="
+          ]
+        ],
+        "generator_contains": [
+          "simple machines"
+        ],
+        "html_contains": [
+          "simple machines forum",
+          "powered by smf",
+          "smf_"
+        ]
+      }
+    },
+    {
+      "id": "buddypress_profile",
+      "family": "profile_page",
+      "platform": "BuddyPress",
+      "minimum_score": 50,
+      "minimum_signal_types": 2,
+      "discovery": [
+        [
+          "/members/",
+          "/profile/"
+        ],
+        [
+          "/members/",
+          "/activity/"
+        ]
+      ],
+      "signals": {
+        "url_all": [
+          [
+            "/members/",
+            "/profile/"
+          ],
+          [
+            "/members/",
+            "/activity/"
+          ]
+        ],
+        "html_contains": [
+          "buddypress",
+          "bp-",
+          "class=\"buddypress"
+        ]
+      }
+    },
+    {
+      "id": "dotnetnuke_profile",
+      "family": "profile_page",
+      "platform": "DotNetNuke",
+      "minimum_score": 50,
+      "minimum_signal_types": 1,
+      "discovery": [
+        [
+          "/userid/",
+          "/tabid/"
+        ],
+        [
+          "/activity-feed/userid/"
+        ]
+      ],
+      "signals": {
+        "url_all": [
+          [
+            "/userid/",
+            "/tabid/"
+          ],
+          [
+            "/activity-feed/userid/"
+          ]
+        ],
+        "html_contains": [
+          "dotnetnuke",
+          "dnn",
+          "dnnmodule"
+        ]
+      }
+    },
+    {
+      "id": "elgg_profile",
+      "family": "profile_page",
+      "platform": "Elgg",
+      "minimum_score": 50,
+      "minimum_signal_types": 2,
+      "comment": "Bare /profile/ measured 1.3% yield; HTML-only rule for pages found by other clauses.",
+      "discovery": [],
+      "signals": {
+        "html_contains": [
+          "elgg",
+          "elgg-"
+        ]
+      }
+    },
+    {
+      "id": "spip_comment",
+      "family": "blog_comment",
+      "platform": "SPIP",
+      "minimum_score": 50,
+      "minimum_signal_types": 1,
+      "discovery": [
+        [
+          "spip.php?article"
+        ]
+      ],
+      "signals": {
+        "url_all": [
+          [
+            "spip.php?article"
+          ]
+        ],
+        "generator_contains": [
+          "spip"
+        ],
+        "html_contains": [
+          "spip",
+          "generator\" content=\"spip"
+        ]
+      }
+    },
+    {
+      "id": "drupal_comment",
+      "family": "blog_comment",
+      "platform": "Drupal",
+      "minimum_score": 50,
+      "minimum_signal_types": 1,
+      "discovery": [
+        [
+          "/comment/reply/"
+        ],
+        [
+          "/node/",
+          "#comment-form"
+        ]
+      ],
+      "signals": {
+        "url_all": [
+          [
+            "/comment/reply/"
+          ]
+        ],
+        "generator_contains": [
+          "drupal"
+        ],
+        "html_contains": [
+          "drupal",
+          "comment-form",
+          "sites/all/",
+          "sites/default/"
+        ]
+      }
+    },
+    {
+      "id": "joomla_k2",
+      "family": "article_submit",
+      "platform": "Joomla K2",
+      "minimum_score": 50,
+      "minimum_signal_types": 1,
+      "discovery": [
+        [
+          "option=com_k2"
+        ],
+        [
+          "/component/k2/"
+        ],
+        [
+          "/component/users/",
+          "view=registration"
+        ]
+      ],
+      "signals": {
+        "url_all": [
+          [
+            "option=com_k2"
+          ],
+          [
+            "/component/k2/"
+          ],
+          [
+            "/component/users/",
+            "view=registration"
+          ]
+        ],
+        "generator_contains": [
+          "joomla"
+        ],
+        "html_contains": [
+          "com_k2",
+          "itemk2",
+          "k2container",
+          "joomla"
+        ]
+      }
+    },
+    {
+      "id": "xpressengine_board",
+      "family": "forum",
+      "platform": "XpressEngine",
+      "minimum_score": 50,
+      "minimum_signal_types": 1,
+      "discovery": [
+        [
+          "document_srl="
+        ],
+        [
+          "index.php?mid=",
+          "document_srl"
+        ]
+      ],
+      "signals": {
+        "url_all": [
+          [
+            "document_srl="
+          ]
+        ],
+        "generator_contains": [
+          "xpressengine",
+          "rhymix"
+        ],
+        "html_contains": [
+          "xpressengine",
+          "xe_",
+          "xe-",
+          "rhymix"
+        ]
+      }
+    },
+    {
+      "id": "blogengine_comment",
+      "family": "blog_comment",
+      "platform": "BlogEngine.NET",
+      "minimum_score": 50,
+      "minimum_signal_types": 2,
+      "discovery": [
+        [
+          "/post/",
+          ".aspx"
+        ],
+        [
+          "/post.aspx?id="
+        ]
+      ],
+      "signals": {
+        "url_all": [
+          [
+            "/post/",
+            ".aspx"
+          ],
+          [
+            "/post.aspx?id="
+          ]
+        ],
+        "generator_contains": [
+          "blogengine"
+        ],
+        "html_contains": [
+          "blogengine",
+          "blogengine.net"
+        ]
+      }
+    },
+    {
+      "id": "question2answer",
+      "family": "article_submit",
+      "platform": "Question2Answer",
+      "minimum_score": 50,
+      "minimum_signal_types": 2,
+      "discovery": [
+        [
+          "index.php?qa="
+        ],
+        [
+          "/qa/"
+        ],
+        [
+          "?qa=questions"
+        ]
+      ],
+      "signals": {
+        "url_all": [
+          [
+            "index.php?qa="
+          ],
+          [
+            "/qa/"
+          ],
+          [
+            "?qa=questions"
+          ]
+        ],
+        "html_contains": [
+          "question2answer",
+          "qa-nav",
+          "qa-main",
+          "qa-part"
+        ]
+      }
+    },
+    {
+      "id": "dwqa_question",
+      "family": "article_submit",
+      "platform": "DW Question Answer",
+      "minimum_score": 50,
+      "minimum_signal_types": 1,
+      "discovery": [
+        [
+          "/dwqa-questions/"
+        ],
+        [
+          "/dwqa-question/"
+        ]
+      ],
+      "signals": {
+        "url_all": [
+          [
+            "/dwqa-questions/"
+          ],
+          [
+            "/dwqa-question/"
+          ]
+        ],
+        "html_contains": [
+          "dwqa"
+        ]
+      }
+    },
+    {
+      "id": "ojs_journal",
+      "family": "article_submit",
+      "platform": "Open Journal Systems",
+      "minimum_score": 50,
+      "minimum_signal_types": 2,
+      "discovery": [
+        [
+          "/index.php/",
+          "/user/register"
+        ],
+        [
+          "/index.php/",
+          "/login/signin"
+        ],
+        [
+          "/index.php/",
+          "/article/view/"
+        ]
+      ],
+      "signals": {
+        "url_all": [
+          [
+            "/index.php/",
+            "/user/register"
+          ],
+          [
+            "/index.php/",
+            "/login/signin"
+          ],
+          [
+            "/index.php/",
+            "/article/view/"
+          ]
+        ],
+        "generator_contains": [
+          "open journal systems"
+        ],
+        "html_contains": [
+          "open journal systems",
+          "pkp",
+          "ojs"
+        ]
+      }
+    },
+    {
+      "id": "wikkawiki",
+      "family": "wiki",
+      "platform": "WikkaWiki",
+      "minimum_score": 50,
+      "minimum_signal_types": 1,
+      "discovery": [
+        [
+          "wikka.php?wakka="
+        ]
+      ],
+      "signals": {
+        "url_all": [
+          [
+            "wikka.php?wakka="
+          ]
+        ],
+        "generator_contains": [
+          "wikka"
+        ],
+        "html_contains": [
+          "wikka"
+        ]
+      }
+    },
+    {
+      "id": "pmwiki",
+      "family": "wiki",
+      "platform": "PmWiki",
+      "minimum_score": 50,
+      "minimum_signal_types": 1,
+      "discovery": [
+        [
+          "pmwiki.php"
+        ],
+        [
+          "/pmwiki/"
+        ]
+      ],
+      "signals": {
+        "url_all": [
+          [
+            "pmwiki.php"
+          ],
+          [
+            "/pmwiki/"
+          ]
+        ],
+        "generator_contains": [
+          "pmwiki"
+        ],
+        "html_contains": [
+          "pmwiki"
+        ]
+      }
+    },
+    {
+      "id": "phpfox_profile",
+      "family": "profile_page",
+      "platform": "phpFox",
+      "minimum_score": 50,
+      "minimum_signal_types": 2,
+      "discovery": [
+        [
+          "/profile-",
+          ".html"
+        ],
+        [
+          "index.php?do=/profile/"
+        ]
+      ],
+      "signals": {
+        "url_all": [
+          [
+            "/profile-",
+            ".html"
+          ],
+          [
+            "index.php?do=/profile/"
+          ]
+        ],
+        "html_contains": [
+          "phpfox"
+        ]
+      }
+    },
+    {
+      "id": "oxwall_profile",
+      "family": "profile_page",
+      "platform": "Oxwall",
+      "minimum_score": 50,
+      "minimum_signal_types": 2,
+      "comment": "Only the compound /forum/topic/ clause drives discovery; /user/ alone measured 0.6%.",
+      "discovery": [
+        [
+          "/user/",
+          "/"
+        ],
+        [
+          "/forum/topic/"
+        ]
+      ],
+      "signals": {
+        "url_all": [
+          [
+            "/forum/topic/"
+          ]
+        ],
+        "html_contains": [
+          "oxwall",
+          "ow_"
+        ]
       }
     }
   ]

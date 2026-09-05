@@ -143,6 +143,34 @@ python yield_report.py --db prospects.db --since 2026-07-25 \
 и `--per-run-domain-cap 2` (не больше N URL одного домена за краул). Сейчас
 в базе 5,8 кандидата на домен, а 43% доменов упёрлись в лимит 10.
 
+### Добыча футпринтов из наших баз
+
+Таксономия `cc_links/prospect_footprints.json` (v3) курируется по замерам, а
+не по памяти. Два инструмента, оба открывают базы только для чтения:
+
+```
+# выход каждой discovery-клаузы, мёртвые правила и сигналы, URL-токены,
+# отделяющие сохранённых кандидатов от отвергнутых страниц
+python mine_footprints.py --db prospects.db --since 2026-07-25 \
+    --taxonomy cc_links/prospect_footprints.json --out report.json --markdown report.md
+
+# движки из наших баз GSA (verified + success) с их URL-токенами и
+# список движков-размещений, для которых в таксономии нет правила
+python mine_footprints.py --gsa-db gsabases.db --taxonomy cc_links/prospect_footprints.json
+
+# какие HTML-маркеры несут реальные страницы группы паттернов (из WARC),
+# чтобы правило получило сигналы, а не догадки
+python sample_html_markers.py --db prospects.db --state-dir crawl_states \
+    --group guestbook:0 --per-group 200 --source s3 --markers data/marker-candidates.json
+```
+
+Порядок работы с новым футпринтом: токен из `mine_footprints.py` →
+клауза discovery в правиле → `sample_html_markers.py` по найденным страницам →
+HTML-сигналы из того, что встречается на большинстве страниц → тест в
+`tests/test_prospects.py`. Правила, чья клауза структурная (`/threads/`,
+`/forums/topic/`), требуют HTML-подтверждения (`minimum_signal_types: 2`),
+чтобы URL сам по себе не сохранял страницу.
+
 Обратная связь по discovery-паттернам строится после пилотного fetch:
 
 ```
