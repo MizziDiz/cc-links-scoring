@@ -152,6 +152,10 @@ class ProspectClassifierTests(unittest.TestCase):
              "<meta name='generator' content='WordPress 6'><form id='commentform'>", "blog_comment", "WordPress"),
             ("https://x.example.th/index.php?name=webboard&file=read&id=9", "", "forum", "WebBoard"),
             ("https://x.example.kr/index.php?mid=board&document_srl=123", "", "forum", "XpressEngine"),
+            ("https://x.example.de/2024/01/hallo-welt/",
+             "<meta name='generator' content='WordPress 6.5'>", "blog_comment", "WordPress"),
+            ("https://x.example.com/gallery/main.php?g2_itemId=42", "", "image_comment", "Gallery2"),
+            ("https://x.example.es/k2/item/12-hola", "<div class='itemK2'>", "article_submit", "Joomla K2"),
         ]
         for url, html, family, platform in cases:
             with self.subTest(url=url):

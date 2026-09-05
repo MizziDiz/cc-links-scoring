@@ -45,7 +45,25 @@
         "url_contains": [
           "wp-comments-post.php",
           "replytocom=",
-          "/comment-page-"
+          "/comment-page-",
+          "/hello-world/",
+          "/hallo-welt/",
+          "/bonjour-tout-le-monde/",
+          "/witaj-swiecie/",
+          "/ciao-mondo/",
+          "/hej-verden/",
+          "/ahoj-svet/",
+          "/hej-varlden/",
+          "/ahoj-vsichni/",
+          "/hello-vilag/",
+          "/privet-mir/",
+          "/hei-verden/",
+          "/merhaba-dunya/",
+          "/salut-lume/",
+          "/pozdravljen-svet/",
+          "/moikka-maailma/",
+          "/ola-mundo/",
+          "/hola-mundo/"
         ],
         "html_contains": [
           "wp-comments-post.php",
@@ -67,8 +85,63 @@
         ],
         [
           "/comment-page-"
+        ],
+        [
+          "/hello-world/"
+        ],
+        [
+          "/hallo-welt/"
+        ],
+        [
+          "/bonjour-tout-le-monde/"
+        ],
+        [
+          "/witaj-swiecie/"
+        ],
+        [
+          "/ciao-mondo/"
+        ],
+        [
+          "/hej-verden/"
+        ],
+        [
+          "/ahoj-svet/"
+        ],
+        [
+          "/hej-varlden/"
+        ],
+        [
+          "/ahoj-vsichni/"
+        ],
+        [
+          "/hello-vilag/"
+        ],
+        [
+          "/privet-mir/"
+        ],
+        [
+          "/hei-verden/"
+        ],
+        [
+          "/merhaba-dunya/"
+        ],
+        [
+          "/salut-lume/"
+        ],
+        [
+          "/pozdravljen-svet/"
+        ],
+        [
+          "/moikka-maailma/"
+        ],
+        [
+          "/ola-mundo/"
+        ],
+        [
+          "/hola-mundo/"
         ]
-      ]
+      ],
+      "comment": "Default-post slugs find fresh installs with comments open; the page still needs the WordPress generator or a comment form to be stored."
     },
     {
       "id": "generic_blog_comment",
@@ -1770,12 +1843,17 @@
       "platform": "Joomla K2",
       "minimum_score": 50,
       "minimum_signal_types": 1,
+      "comment": "GSA General Blogs tokens /k2/ (2 243 hosts, spec 1.0) and /item/ (2 697, 0.98).",
       "discovery": [
         [
           "option=com_k2"
         ],
         [
           "/component/k2/"
+        ],
+        [
+          "/k2/",
+          "/item/"
         ],
         [
           "/component/users/",
@@ -1789,6 +1867,10 @@
           ],
           [
             "/component/k2/"
+          ],
+          [
+            "/k2/",
+            "/item/"
           ],
           [
             "/component/users/",
@@ -1980,6 +2062,51 @@
           "open journal systems",
           "pkp",
           "ojs"
+        ]
+      }
+    },
+    {
+      "id": "gallery2_comment",
+      "family": "image_comment",
+      "platform": "Gallery2",
+      "minimum_score": 50,
+      "minimum_signal_types": 1,
+      "comment": "GSA Gallery2: 885 verified hosts.",
+      "discovery": [
+        [
+          "g2_itemid="
+        ],
+        [
+          "main.php?g2_"
+        ]
+      ],
+      "signals": {
+        "url_all": [
+          [
+            "g2_itemid="
+          ],
+          [
+            "main.php?g2_"
+          ]
+        ],
+        "html_contains": [
+          "gallery2",
+          "g2_",
+          "menalto"
+        ]
+      }
+    },
+    {
+      "id": "classipress_listing",
+      "family": "article_submit",
+      "platform": "ClassiPress",
+      "minimum_score": 50,
+      "minimum_signal_types": 1,
+      "comment": "GSA ClassiPress 293 hosts; only /author/ is specific (65%), too broad. HTML-only.",
+      "discovery": [],
+      "signals": {
+        "html_contains": [
+          "classipress"
         ]
       }
     },

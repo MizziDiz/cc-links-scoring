@@ -95,6 +95,8 @@ class GsaReportTests(unittest.TestCase):
             for i in range(25):
                 rows.append(("b", "verified", "Forum", "YYBoard", f"h{i}.jp", "jp", "jp", "",
                              "/cgi-bin/yybbs/yybbs.cgi?list=thread", ""))
+                rows.append(("b", "verified", "Blog Comment", "General Blogs", f"w{i}.de", "de", "de", "",
+                             "/hallo-welt/", ""))
                 rows.append(("b", "success", "Forum", "phpBB", f"p{i}.de", "de", "de", "",
                              f"/viewtopic.php?t={i}", ""))
                 rows.append(("b", "verified", "Indexer", "Fast Indexer", f"i{i}.com", "com", "", "",
@@ -103,10 +105,14 @@ class GsaReportTests(unittest.TestCase):
             conn.commit()
             conn.close()
             taxonomy = {"rules": [{"id": "phpbb_forum", "platform": "phpBB",
-                                   "signals": {"url_contains": ["viewtopic.php"]}}]}
+                                   "signals": {"url_contains": ["viewtopic.php"]}},
+                                  {"id": "wordpress_comment", "platform": "WordPress",
+                                   "signals": {"url_contains": ["replytocom="]}}]}
             report = mf.gsa_engines(mf.read_only(path), taxonomy, min_hosts=10, min_token_hosts=10)
         engines = {e["engine"]: e for e in report["engines"]}
         self.assertTrue(engines["phpBB"]["covered_by_taxonomy"])
+        # "General Blogs" is GSA's name for WordPress comments: alias resolves it.
+        self.assertTrue(engines["General Blogs"]["covered_by_taxonomy"])
         self.assertFalse(engines["YYBoard"]["covered_by_taxonomy"])
         self.assertFalse(engines["Fast Indexer"]["placement"])
         self.assertEqual([e["engine"] for e in report["coverage_gaps"]], ["YYBoard"])

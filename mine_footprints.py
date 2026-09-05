@@ -103,6 +103,30 @@ def term_covered(term: str, known: Iterable[str]) -> bool:
     return any(term in k or k in term for k in known if len(k) >= 4)
 
 
+# GSA engine names that do not contain the taxonomy platform/rule name.
+GSA_ENGINE_ALIASES = {
+    "general blogs": "wordpress",
+    "wordpress article": "wordpress",
+    "wordpress directory": "wordpress",
+    "wordpress forum": "wpforo",
+    "general bbs": "generic_forum",
+    "gnuboard": "generic_board_post",
+    "datalife cms": "datalife",
+    "dedeeims": "dedecms",
+    "bbpress (forum profile)": "bbpress",
+    "aska bbs": "cgi_bbs_jp",
+    "yyboard": "cgi_bbs_jp",
+    "easybook reloaded": "easybook",
+    "kideshoutbox": "kide",
+    "php link directory": "phplinkdirectory",
+    "general url shortener": "nukeviet",
+    "drupal - comment": "drupal",
+    "drupal - blog": "drupal",
+    "vbulletin - blog": "vbulletin",
+    "trackback-format2": "trackback",
+}
+
+
 def taxonomy_platforms(taxonomy: dict[str, Any]) -> set[str]:
     names = set()
     for rule in taxonomy.get("rules", []):
@@ -110,6 +134,11 @@ def taxonomy_platforms(taxonomy: dict[str, Any]) -> set[str]:
             if value:
                 names.add(re.sub(r"[^a-z0-9]", "", str(value).lower()))
     return names
+
+
+def engine_key(engine: str) -> str:
+    alias = GSA_ENGINE_ALIASES.get(engine.lower().strip(), engine)
+    return re.sub(r"[^a-z0-9]", "", alias.lower())
 
 
 # -------------------------------------------------------- prospects.db ---
@@ -252,7 +281,7 @@ def gsa_engines(conn: sqlite3.Connection, taxonomy: dict[str, Any], min_hosts: i
     for engine, hosts in sorted(engine_hosts.items(), key=lambda kv: -len(kv[1])):
         if len(hosts) < min_hosts:
             continue
-        key = re.sub(r"[^a-z0-9]", "", engine.lower())
+        key = engine_key(engine)
         placement = not any(bad in engine.lower() for bad in NOT_PLACEMENT_ENGINES)
         covered = any(key and (key in p or p in key) for p in known_platforms if len(p) >= 4)
         tokens = []
