@@ -15,7 +15,7 @@ Environment=PYTHONUNBUFFERED=1
 # per-part funnel counters the yield/pruning analysis depends on.
 # --target-total must exceed what prospects.db already holds (1.95M candidates
 # on 2026-07-30), otherwise multi_crawl exits at once without touching a crawl.
-ExecStart=/opt/cc-links-scoring/.venv/bin/python /opt/cc-links-scoring/multi_crawl.py --target-total 3000000 --max-crawls 24 --discovery-shards 0 --state-dir /var/lib/cc-prospects/crawls-v033 --categories-file /opt/cc-links-scoring/categories.json --per-category-limit 5000 --max-parts 300 --max-per-domain 10 --min-score 50 --db /var/lib/cc-prospects/prospects.db --workers 16 --source s3 --progress-interval 60 --discovery-metrics --pattern-min-yield 0.2 --pattern-yield-since 2026-07-25 --per-run-domain-cap 3
+ExecStart=/opt/cc-links-scoring/.venv/bin/python /opt/cc-links-scoring/multi_crawl.py --target-total 3000000 --max-crawls 24 --discovery-shards 0 --state-dir /var/lib/cc-prospects/crawls-v3 --categories-file /opt/cc-links-scoring/categories.json --per-category-limit 5000 --max-parts 300 --max-per-domain 10 --min-score 50 --db /var/lib/cc-prospects/prospects.db --workers 16 --source s3 --progress-interval 60 --discovery-metrics --pattern-min-yield 0.2 --pattern-yield-since 2026-07-25 --per-run-domain-cap 3
 # OOM kills and crashes are worth a restart; the fetch loop commits every 200
 # results whatever their outcome, so a restart replays little. Not "always":
 # multi_crawl exits 0 once the target is met and must then stay down.
