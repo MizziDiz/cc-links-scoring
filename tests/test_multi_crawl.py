@@ -71,6 +71,33 @@ class MultiCrawlTests(unittest.TestCase):
             args, "CC-MAIN-2026-21", "/tmp/metrics.jsonl")
         self.assertIn("--discovery-metrics", command)
 
+    def test_pre_fetch_gates_are_forwarded(self):
+        args = argparse.Namespace(
+            categories_file="categories.json", per_category_limit=5000,
+            db="prospects.db", min_score=50, workers=64, max_parts=300,
+            max_per_domain=10, source="s3", index_source="auto",
+            progress_interval=60, footprints=None, category_limits=None,
+            discovery_profile="precise", broad_quota_fraction=0.25,
+            broad_index_sample=0.02, discovery_metrics=False,
+            exclude_file=None, proxy=None, proxy_file=None,
+            pattern_min_yield=0.2, pattern_min_decisions=20,
+            pattern_explore_share=0.05, pattern_yield_file=None,
+            pattern_yield_since="2026-07-25", new_domains_only=True,
+            per_run_domain_cap=3)
+        command = build_command(args, "CC-MAIN-2026-21", "/tmp/gates.jsonl")
+        self.assertEqual(command[command.index("--pattern-min-yield") + 1], "0.2")
+        self.assertEqual(command[command.index("--pattern-yield-since") + 1], "2026-07-25")
+        self.assertIn("--new-domains-only", command)
+        self.assertEqual(command[command.index("--per-run-domain-cap") + 1], "3")
+        # Without the flags nothing is forwarded, so old configs behave unchanged.
+        args.pattern_min_yield = None
+        args.new_domains_only = False
+        args.per_run_domain_cap = 0
+        command = build_command(args, "CC-MAIN-2026-21", "/tmp/gates.jsonl")
+        self.assertNotIn("--pattern-min-yield", command)
+        self.assertNotIn("--new-domains-only", command)
+        self.assertNotIn("--per-run-domain-cap", command)
+
     def test_merge_deduplicates_normalized_urls(self):
         with tempfile.TemporaryDirectory() as tmp:
             first = Path(tmp) / "first.jsonl"

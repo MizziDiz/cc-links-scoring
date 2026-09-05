@@ -8,8 +8,15 @@ Type=simple
 User=ec2-user
 WorkingDirectory=/opt/cc-links-scoring
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/opt/cc-links-scoring/.venv/bin/python /opt/cc-links-scoring/multi_crawl.py --target-total 500000 --max-crawls 24 --discovery-shards 0 --state-dir /var/lib/cc-prospects/crawls-v033 --categories-file /opt/cc-links-scoring/categories.json --per-category-limit 5000 --max-parts 300 --max-per-domain 10 --min-score 50 --db /var/lib/cc-prospects/prospects.db --workers 64 --source s3 --progress-interval 60
-Restart=on-failure
+# --pattern-min-yield 0.2: do not pay a WARC request for URLs whose discovery
+# pattern historically stores under 20% (46% of fetches on 25-30 July 2026 were
+# unmatched; 97% of that sat in groups under this threshold). The profile is
+# rebuilt from prospects.db before each crawl. --discovery-metrics keeps the
+# per-part funnel counters the yield/pruning analysis depends on.
+ExecStart=/opt/cc-links-scoring/.venv/bin/python /opt/cc-links-scoring/multi_crawl.py --target-total 500000 --max-crawls 24 --discovery-shards 0 --state-dir /var/lib/cc-prospects/crawls-v033 --categories-file /opt/cc-links-scoring/categories.json --per-category-limit 5000 --max-parts 300 --max-per-domain 10 --min-score 50 --db /var/lib/cc-prospects/prospects.db --workers 64 --source s3 --progress-interval 60 --discovery-metrics --pattern-min-yield 0.2 --pattern-yield-since 2026-07-25 --per-run-domain-cap 3
+# Spot interruptions and OOM kills are both worth a restart; the fetch loop
+# commits every 200 results whatever their outcome, so a restart replays little.
+Restart=always
 RestartSec=30
 TimeoutStopSec=300
 KillSignal=SIGINT

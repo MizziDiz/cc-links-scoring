@@ -24,6 +24,9 @@ from cc_links.prospects import (broad_discovery_regex,
                                 classify_discovery_url, classify_prospect,
                                 discovery_ruleset_identity, discovery_url_patterns,
                                 normalize_url, precise_discovery_regex)
+from cc_links.yield_gate import (DomainGate, YieldGate, apply_gates,
+                                 collect_pattern_yield, load_known_domains,
+                                 load_yield_profile)
 
 
 def fetch_and_classify(record, footprints, minimum_score):
@@ -193,6 +196,44 @@ def run(args):
     existing.update(r[0] for r in conn.execute("SELECT normalized_url FROM processed_urls"))
     print(f"[resume] {len(existing)} URLs already processed; they will not be fetched again")
 
+    # Pre-fetch gates. They only decide what is worth a WARC request; the
+    # classifier, --min-score and --max-per-domain still decide what is stored.
+    yield_profile = None
+    if args.pattern_min_yield is not None:
+        if args.pattern_yield_file:
+            yield_profile = load_yield_profile(args.pattern_yield_file)
+        else:
+            yield_profile = collect_pattern_yield(
+                args.db, since=args.pattern_yield_since,
+                minimum_decisions=args.pattern_min_decisions)
+        probe = YieldGate(yield_profile, args.pattern_min_yield,
+                          args.pattern_min_decisions, args.pattern_explore_share)
+        low = probe.low_yield_groups()
+        print(f"[yield-gate] {len(yield_profile['groups'])} pattern/tier groups known; "
+              f"{len(low)} below {args.pattern_min_yield:.0%} yield will be skipped "
+              f"(explore share {args.pattern_explore_share:.0%})")
+        for group in low[:10]:
+            print(f"[yield-gate]   skip {group['pattern_id']}|tier{group['discovery_tier']}: "
+                  f"{group['stored']}/{group['decisions']} stored "
+                  f"({group['yield']:.1%})")
+    known_domains = set()
+    if args.new_domains_only:
+        known_domains = load_known_domains(conn)
+        print(f"[domain-gate] {len(known_domains)} domains already have a candidate; "
+              "their URLs will not be fetched in this run")
+    if args.per_run_domain_cap:
+        print(f"[domain-gate] at most {args.per_run_domain_cap} URL(s) per domain "
+              "scheduled in this run")
+
+    def make_gates():
+        return [
+            YieldGate(yield_profile, args.pattern_min_yield or 0.0,
+                      args.pattern_min_decisions, args.pattern_explore_share),
+            DomainGate(known_domains, skip_known=args.new_domains_only,
+                       per_run_cap=args.per_run_domain_cap),
+        ]
+
+    gates = make_gates()
     scheduled = set(existing)
 
     def attribution(rec):
@@ -213,29 +254,31 @@ def run(args):
             **attribution(rec),
         }
 
-    def records():
+    def schedulable(seen, active_gates):
+        """New manifest URLs that pass every gate, in priority order."""
         emitted = 0
-        for rec in load_candidates_prioritized(
-                candidates_file, priority_profile=priority_profile):
-            normalized = normalize_url(rec["url"])
-            if normalized not in scheduled:
-                scheduled.add(normalized)
-                yield rec
-                emitted += 1
-                if args.fetch_limit and emitted >= args.fetch_limit:
-                    return
+        source = load_candidates_prioritized(
+            candidates_file, priority_profile=priority_profile)
+
+        def unseen():
+            for rec in source:
+                normalized = normalize_url(rec["url"])
+                if normalized not in seen:
+                    seen.add(normalized)
+                    yield rec
+
+        for rec in apply_gates(unseen(), active_gates):
+            yield rec
+            emitted += 1
+            if args.fetch_limit and emitted >= args.fetch_limit:
+                return
+
+    def records():
+        yield from schedulable(scheduled, gates)
 
     # Count without consuming the de-duplicating iterator used by the workers.
-    count_seen = set(existing)
-    total = 0
-    for rec in load_candidates_prioritized(
-            candidates_file, priority_profile=priority_profile):
-        normalized = normalize_url(rec["url"])
-        if normalized not in count_seen:
-            count_seen.add(normalized)
-            total += 1
-            if args.fetch_limit and total >= args.fetch_limit:
-                break
+    # Fresh gate instances keep the per-run domain counters of the real pass intact.
+    total = sum(1 for _ in schedulable(set(existing), make_gates()))
     pending = set()
     iterator = records()
     stats = Counter()
@@ -258,50 +301,51 @@ def run(args):
                     result = future.result()
                     processed += 1
                     progress.update(1)
+                    rec = result["record"]
+                    normalized = normalize_url(rec["url"])
                     if not result["ok"]:
                         stats["fetch_error"] += 1
-                        rec = result["record"]
-                        normalized = normalize_url(rec["url"])
                         record_fetch_error(
                             conn, normalized, rec["url"], args.crawl,
                             result["error"],
                         )
-                        continue
-                    rec = result["record"]
-                    normalized = normalize_url(rec["url"])
-                    if not result["matches"]:
+                    elif not result["matches"]:
                         stats["unmatched"] += 1
                         mark_url_processed(
                             conn, normalized, rec["url"], args.crawl,
                             "unmatched", **processing_attribution(rec))
-                        continue
-                    # One URL may legitimately match multiple families. Store the
-                    # best match in candidates; preserve every signal in JSON.
-                    best = result["matches"][0]
-                    all_matches = [m.to_dict() for m in result["matches"]]
-                    upsert_candidate(
-                        conn, normalized_url=normalized, url=rec["url"],
-                        domain=domain_of(rec["url"]),
-                        registered_domain=rec.get("url_host_registered_domain"),
-                        crawl=args.crawl, tld=rec.get("url_host_tld"),
-                        country=country_name(rec.get("url_host_tld")), bucket=rec.get("bucket"),
-                        family=best.family, platform=best.platform, score=best.score,
-                        matched_signals=json.dumps(all_matches, ensure_ascii=False),
-                        warc_filename=rec.get("filename"), warc_offset=rec.get("offset"),
-                        warc_length=rec.get("length"),
-                        **attribution(rec),
-                    )
-                    stats[f"family:{best.family}"] += 1
-                    stats["stored"] += 1
-                    mark_url_processed(
-                        conn, normalized, rec["url"], args.crawl,
-                        "stored", best.score, final_family=best.family,
-                        final_platform=best.platform,
-                        final_rule_id=best.rule_id,
-                        matched_signals=json.dumps(
-                            all_matches, ensure_ascii=False
-                        ),
-                        **processing_attribution(rec))
+                    else:
+                        # One URL may legitimately match multiple families. Store the
+                        # best match in candidates; preserve every signal in JSON.
+                        best = result["matches"][0]
+                        all_matches = [m.to_dict() for m in result["matches"]]
+                        upsert_candidate(
+                            conn, normalized_url=normalized, url=rec["url"],
+                            domain=domain_of(rec["url"]),
+                            registered_domain=rec.get("url_host_registered_domain"),
+                            crawl=args.crawl, tld=rec.get("url_host_tld"),
+                            country=country_name(rec.get("url_host_tld")), bucket=rec.get("bucket"),
+                            family=best.family, platform=best.platform, score=best.score,
+                            matched_signals=json.dumps(all_matches, ensure_ascii=False),
+                            warc_filename=rec.get("filename"), warc_offset=rec.get("offset"),
+                            warc_length=rec.get("length"),
+                            **attribution(rec),
+                        )
+                        stats[f"family:{best.family}"] += 1
+                        stats["stored"] += 1
+                        mark_url_processed(
+                            conn, normalized, rec["url"], args.crawl,
+                            "stored", best.score, final_family=best.family,
+                            final_platform=best.platform,
+                            final_rule_id=best.rule_id,
+                            matched_signals=json.dumps(
+                                all_matches, ensure_ascii=False
+                            ),
+                            **processing_attribution(rec))
+                    # Commit on every Nth result regardless of its outcome. Until
+                    # 2026-09 this ran only for stored results, so a run whose
+                    # every Nth page was unmatched never checkpointed and a
+                    # SIGINT/Spot interruption replayed hours of paid fetches.
                     if processed % args.commit_every == 0:
                         conn.commit()
                     now = time.monotonic()
@@ -309,7 +353,10 @@ def run(args):
                         elapsed = max(now - started_at, 0.001)
                         print(f"[progress] processed={processed}/{total} "
                               f"stored={stats['stored']} unmatched={stats['unmatched']} "
-                              f"errors={stats['fetch_error']} rate={processed / elapsed:.1f}/s",
+                              f"errors={stats['fetch_error']} "
+                              f"skipped_yield={gates[0].stats['skipped']} "
+                              f"skipped_domain={gates[1].stats['skipped_known'] + gates[1].stats['skipped_cap']} "
+                              f"rate={processed / elapsed:.1f}/s",
                               flush=True)
                         last_report = now
                 fill()
@@ -320,6 +367,8 @@ def run(args):
               f"{args.max_per_domain} per domain")
     conn.close()
     print("[result] " + ", ".join(f"{k}={v}" for k, v in stats.most_common()))
+    print("[yield-gate] " + ", ".join(f"{k}={v}" for k, v in gates[0].stats.items()))
+    print("[domain-gate] " + ", ".join(f"{k}={v}" for k, v in gates[1].stats.items()))
 
 
 def main():
@@ -337,6 +386,28 @@ def main():
     parser.add_argument(
         "--fetch-limit", type=int,
         help="Fetch at most N new manifest URLs (primarily for reproducible pilots)")
+    parser.add_argument(
+        "--pattern-min-yield", type=float,
+        help="Skip URLs whose discovery pattern/tier historically stored fewer than "
+             "this share of fetched pages (e.g. 0.2). Off unless given.")
+    parser.add_argument(
+        "--pattern-yield-file",
+        help="Yield profile JSON from yield_report.py; without it the profile is "
+             "computed from --db at start")
+    parser.add_argument(
+        "--pattern-yield-since",
+        help="Only count processed_urls rows at or after this timestamp "
+             "(YYYY-MM-DD) when computing the profile from --db")
+    parser.add_argument("--pattern-min-decisions", type=int, default=20,
+                        help="Groups with fewer decisions are always fetched (exploration)")
+    parser.add_argument("--pattern-explore-share", type=float, default=0.05,
+                        help="Deterministic share of low-yield URLs still fetched")
+    parser.add_argument(
+        "--new-domains-only", action="store_true",
+        help="Do not fetch URLs of registered domains that already have a candidate")
+    parser.add_argument(
+        "--per-run-domain-cap", type=int, default=0,
+        help="Schedule at most N URLs per registered domain in this run (0 = off)")
     parser.add_argument("--per-category-limit", type=int, default=10000)
     parser.add_argument("--crawl", default="CC-MAIN-2026-25")
     parser.add_argument("--db", default="prospects.db")
@@ -379,6 +450,12 @@ def main():
         parser.error("--broad-index-sample must be between 0 and 1")
     if args.fetch_limit is not None and args.fetch_limit < 1:
         parser.error("--fetch-limit must be at least 1")
+    if args.pattern_min_yield is not None and not 0.0 <= args.pattern_min_yield <= 1.0:
+        parser.error("--pattern-min-yield must be between 0 and 1")
+    if not 0.0 <= args.pattern_explore_share <= 1.0:
+        parser.error("--pattern-explore-share must be between 0 and 1")
+    if args.per_run_domain_cap < 0:
+        parser.error("--per-run-domain-cap must be 0 or positive")
     run(args)
 
 

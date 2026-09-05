@@ -146,6 +146,18 @@ def build_command(args, crawl, candidates_file, *, per_category_limit=None,
         command.extend(["--pattern-priorities", args.pattern_priorities])
     if getattr(args, "fetch_limit", None):
         command.extend(["--fetch-limit", str(args.fetch_limit)])
+    if getattr(args, "pattern_min_yield", None) is not None:
+        command.extend(["--pattern-min-yield", str(args.pattern_min_yield),
+                        "--pattern-min-decisions", str(args.pattern_min_decisions),
+                        "--pattern-explore-share", str(args.pattern_explore_share)])
+        if getattr(args, "pattern_yield_file", None):
+            command.extend(["--pattern-yield-file", args.pattern_yield_file])
+        if getattr(args, "pattern_yield_since", None):
+            command.extend(["--pattern-yield-since", args.pattern_yield_since])
+    if getattr(args, "new_domains_only", False):
+        command.append("--new-domains-only")
+    if getattr(args, "per_run_domain_cap", 0):
+        command.extend(["--per-run-domain-cap", str(args.per_run_domain_cap)])
     if args.category_limits:
         command.extend(["--category-limits", args.category_limits])
     if getattr(args, "discovery_metrics", False):
@@ -324,6 +336,21 @@ def main():
     parser.add_argument(
         "--fetch-limit", type=int,
         help="Fetch at most N new URLs from each crawl (pilot/debug option)")
+    parser.add_argument(
+        "--pattern-min-yield", type=float,
+        help="Skip URLs whose discovery pattern/tier historically stored fewer than "
+             "this share of fetched pages (e.g. 0.2); profile is rebuilt from --db "
+             "before each crawl unless --pattern-yield-file is given")
+    parser.add_argument("--pattern-yield-file",
+                        help="Fixed yield profile JSON from yield_report.py")
+    parser.add_argument("--pattern-yield-since",
+                        help="Only count processed_urls rows from this date (YYYY-MM-DD)")
+    parser.add_argument("--pattern-min-decisions", type=int, default=20)
+    parser.add_argument("--pattern-explore-share", type=float, default=0.05)
+    parser.add_argument("--new-domains-only", action="store_true",
+                        help="Do not fetch URLs of domains that already have a candidate")
+    parser.add_argument("--per-run-domain-cap", type=int, default=0,
+                        help="Schedule at most N URLs per domain within one crawl (0 = off)")
     parser.add_argument("--per-category-limit", type=int, default=5000)
     parser.add_argument("--db", default="prospects.db")
     parser.add_argument("--min-score", type=int, default=50)
