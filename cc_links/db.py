@@ -129,8 +129,14 @@ def _ensure_columns(conn: sqlite3.Connection, table: str, columns) -> None:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
 
 
-def init_db(path: str) -> sqlite3.Connection:
-    conn = sqlite3.connect(path)
+def init_db(path: str, busy_timeout: float = 300.0) -> sqlite3.Connection:
+    # Two writers can legitimately share the database for a while: the
+    # collector's fetch stage and recheck_unmatched.py. SQLite serializes them,
+    # but with the default 5-second wait the loser died with "database is
+    # locked" (2026-09-06: five service restarts and one aborted re-check).
+    # Waiting minutes instead of seconds turns that into a slowdown.
+    conn = sqlite3.connect(path, timeout=busy_timeout)
+    conn.execute(f"PRAGMA busy_timeout = {int(busy_timeout * 1000)}")
     conn.executescript(SCHEMA)
     for table, columns in ATTRIBUTION_COLUMNS.items():
         _ensure_columns(conn, table, columns)
